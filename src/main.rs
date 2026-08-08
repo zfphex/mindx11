@@ -8,11 +8,13 @@ fn main() {
             D3D_FEATURE_LEVEL::_10_0,
         ];
 
+        let flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG;
+
         let (device, _feature_level, context) = match D3D11CreateDevice(
             None,
             D3D_DRIVER_TYPE::HARDWARE,
             None,
-            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            flags,
             Some(&feature_levels),
             D3D11_SDK_VERSION,
         ) {
@@ -32,7 +34,7 @@ fn main() {
                     None,
                     D3D_DRIVER_TYPE::WARP,
                     None,
-                    D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                    flags,
                     Some(&feature_levels),
                     D3D11_SDK_VERSION,
                 ) {
@@ -116,6 +118,40 @@ fn main() {
                     err_blob.Release();
                 }
             }
+        }
+
+        let bad_desc = D3D11_BUFFER_DESC {
+            ByteWidth: 0,
+            Usage: D3D11_USAGE::DEFAULT,
+            BindFlags: D3D11_BIND_VERTEX_BUFFER,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
+            StructureByteStride: 0,
+        };
+        println!("Provoking a debug-layer error with a zero-width buffer...");
+        let _ = device.CreateBuffer(&bad_desc, None);
+
+        match device.QueryInterface::<ID3D11InfoQueue>(&IID_ID3D11INFOQUEUE) {
+            Ok(info_queue) => {
+                let count = info_queue.GetNumStoredMessages();
+                println!(
+                    "Debug layer stored {} messages, denied {} by storage filter",
+                    count,
+                    info_queue.GetNumMessagesDeniedByStorageFilter()
+                );
+                for i in 0..count {
+                    match info_queue.GetMessage(i) {
+                        Ok(msg) => println!("{}", msg),
+                        Err(hr) => println!("GetMessage({}) failed: {}", i, hr),
+                    }
+                }
+                info_queue.ClearStoredMessages();
+                info_queue.Release();
+            }
+            Err(hr) => println!(
+                "ID3D11InfoQueue unavailable (debug layer not installed?): {}",
+                hr
+            ),
         }
 
         let ctx_refs = context.Release();
