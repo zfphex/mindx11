@@ -56,9 +56,13 @@ pub struct IUnknownVtbl {
 pub struct IUnknown(pub *mut *const IUnknownVtbl);
 
 impl IUnknown {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe {
-            ((*(*self.0)).QueryInterface)(self.0 as _, riid as *const _, ppvObject as *mut _ as _)
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        let mut obj = core::ptr::null_mut();
+        let hr = unsafe { ((*(*self.0)).QueryInterface)(self.0 as _, riid as *const _, &mut obj) };
+        if hr >= 0 {
+            Ok(unsafe { core::mem::transmute_copy(&obj) })
+        } else {
+            Err(hr)
         }
     }
     pub unsafe fn AddRef(&self) -> u32 {

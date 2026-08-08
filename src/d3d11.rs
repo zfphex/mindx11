@@ -1,6 +1,6 @@
 use crate::d3dcommon::{D3D_DRIVER_TYPE, D3D_FEATURE_LEVEL, D3D_PRIMITIVE_TOPOLOGY};
-use crate::dxgi::{DXGI_FORMAT, DXGI_SAMPLE_DESC, DXGI_SWAP_CHAIN_DESC, IDXGISwapChain};
-use crate::types::{BOOL, GUID, HRESULT, IUnknown, IUnknownVtbl, RECT};
+use crate::dxgi::{DXGI_FORMAT, DXGI_SAMPLE_DESC, DXGI_SWAP_CHAIN_DESC, IDXGIAdapter, IDXGISwapChain};
+use crate::types::{BOOL, GUID, HMODULE, HRESULT, IUnknown, IUnknownVtbl, RECT};
 use core::ffi::c_void;
 
 pub const IID_ID3D11DEVICECHILD: GUID = GUID::from_u128(0x1841e5c8_16b0_489b_bcc8_44cfb0d5deae);
@@ -223,6 +223,16 @@ pub enum D3D11_INPUT_CLASSIFICATION {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum D3D11_RESOURCE_DIMENSION {
+    UNKNOWN = 0,
+    BUFFER = 1,
+    TEXTURE1D = 2,
+    TEXTURE2D = 3,
+    TEXTURE3D = 4,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum D3D11_RTV_DIMENSION {
     UNKNOWN = 0,
     BUFFER = 1,
@@ -245,6 +255,25 @@ pub enum D3D11_DSV_DIMENSION {
     TEXTURE2DARRAY = 4,
     TEXTURE2DMS = 5,
     TEXTURE2DMSARRAY = 6,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum D3D11_COUNTER_TYPE {
+    FLOAT32 = 0,
+    UINT16 = 1,
+    UINT32 = 2,
+    UINT64 = 3,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum D3D11_FEATURE {
+    THREADING = 0,
+    DOUBLES = 1,
+    FORMAT_SUPPORT = 2,
+    FORMAT_SUPPORT2 = 3,
+    D3D10_X_HARDWARE_OPTIONS = 4,
 }
 
 #[repr(C)]
@@ -492,13 +521,33 @@ pub struct D3D11_COUNTER_DESC {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct D3D11_COUNTER_INFO {
+    pub LastDeviceCounter: u32,
+    pub NumSimultaneousCounters: u32,
+    pub NumDetectableParallelUnits: u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct D3D11_SO_DECLARATION_ENTRY {
+    pub Stream: u32,
+    pub SemanticName: *const u8,
+    pub SemanticIndex: u32,
+    pub StartComponent: u8,
+    pub ComponentCount: u8,
+    pub OutputSlot: u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct D3D11_MAPPED_SUBRESOURCE {
     pub pData: *mut c_void,
     pub RowPitch: u32,
     pub DepthPitch: u32,
 }
 
-// Interfaces
+// Interfaces Vtbls & Structs
+
 #[repr(C)]
 pub struct ID3D11DeviceChildVtbl {
     pub base: IUnknownVtbl,
@@ -527,8 +576,8 @@ pub struct ID3D11DeviceChildVtbl {
 pub struct ID3D11DeviceChild(pub *mut *const ID3D11DeviceChildVtbl);
 
 impl ID3D11DeviceChild {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -536,32 +585,44 @@ impl ID3D11DeviceChild {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetDevice(&self, ppDevice: &mut ID3D11Device) {
-        unsafe { ((*(*self.0)).GetDevice)(self.0 as _, ppDevice as *mut _ as _) }
+    pub unsafe fn GetDevice(&self) -> ID3D11Device {
+        let mut dev = ID3D11Device(core::ptr::null_mut());
+        unsafe { ((*(*self.0)).GetDevice)(self.0 as _, &mut dev.0 as *mut _ as _) };
+        dev
     }
     pub unsafe fn GetPrivateData(
         &self,
         guid: &GUID,
-        pDataSize: &mut u32,
-        pData: *mut c_void,
-    ) -> HRESULT {
-        unsafe {
-            ((*(*self.0)).GetPrivateData)(self.0 as _, guid as *const _, pDataSize as *mut _, pData)
-        }
+        data: Option<&mut [u8]>,
+    ) -> Result<u32, HRESULT> {
+        let (ptr, mut size) = match data {
+            Some(buf) => (buf.as_mut_ptr() as *mut c_void, buf.len() as u32),
+            None => (core::ptr::null_mut(), 0),
+        };
+        let hr = unsafe {
+            ((*(*self.0)).GetPrivateData)(self.0 as _, guid as *const _, &mut size, ptr)
+        };
+        if hr >= 0 { Ok(size) } else { Err(hr) }
     }
-    pub unsafe fn SetPrivateData(&self, guid: &GUID, pData: &[u8]) -> HRESULT {
-        unsafe {
+    pub unsafe fn SetPrivateData(&self, guid: &GUID, pData: &[u8]) -> Result<(), HRESULT> {
+        let hr = unsafe {
             ((*(*self.0)).SetPrivateData)(
                 self.0 as _,
                 guid as *const _,
                 pData.len() as u32,
                 pData.as_ptr() as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(()) } else { Err(hr) }
     }
-    pub unsafe fn SetPrivateDataInterface(&self, guid: &GUID, pData: Option<&IUnknown>) -> HRESULT {
+    pub unsafe fn SetPrivateDataInterface(
+        &self,
+        guid: &GUID,
+        pData: Option<&IUnknown>,
+    ) -> Result<(), HRESULT> {
         let unk = pData.map_or(core::ptr::null(), |u| u as *const _);
-        unsafe { ((*(*self.0)).SetPrivateDataInterface)(self.0 as _, guid as *const _, unk) }
+        let hr = unsafe { ((*(*self.0)).SetPrivateDataInterface)(self.0 as _, guid as *const _, unk) };
+        if hr >= 0 { Ok(()) } else { Err(hr) }
     }
 }
 
@@ -578,8 +639,8 @@ pub struct ID3D11ResourceVtbl {
 pub struct ID3D11Resource(pub *mut *const ID3D11ResourceVtbl);
 
 impl ID3D11Resource {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -587,8 +648,16 @@ impl ID3D11Resource {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetType(&self, pResourceDimension: &mut u32) {
-        unsafe { ((*(*self.0)).GetType)(self.0 as _, pResourceDimension as *mut _) }
+    pub unsafe fn GetType(&self) -> D3D11_RESOURCE_DIMENSION {
+        let mut dim = D3D11_RESOURCE_DIMENSION::UNKNOWN;
+        unsafe { ((*(*self.0)).GetType)(self.0 as _, &mut dim as *mut _ as _) };
+        dim
+    }
+    pub unsafe fn SetEvictionPriority(&self, EvictionPriority: u32) {
+        unsafe { ((*(*self.0)).SetEvictionPriority)(self.0 as _, EvictionPriority) }
+    }
+    pub unsafe fn GetEvictionPriority(&self) -> u32 {
+        unsafe { ((*(*self.0)).GetEvictionPriority)(self.0 as _) }
     }
 }
 
@@ -603,8 +672,8 @@ pub struct ID3D11BufferVtbl {
 pub struct ID3D11Buffer(pub *mut *const ID3D11BufferVtbl);
 
 impl ID3D11Buffer {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -612,8 +681,10 @@ impl ID3D11Buffer {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetDesc(&self, pDesc: &mut D3D11_BUFFER_DESC) {
-        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, pDesc as *mut _) }
+    pub unsafe fn GetDesc(&self) -> D3D11_BUFFER_DESC {
+        let mut desc = core::mem::MaybeUninit::uninit();
+        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, desc.as_mut_ptr()) };
+        unsafe { desc.assume_init() }
     }
 }
 
@@ -628,8 +699,8 @@ pub struct ID3D11Texture1DVtbl {
 pub struct ID3D11Texture1D(pub *mut *const ID3D11Texture1DVtbl);
 
 impl ID3D11Texture1D {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -637,8 +708,10 @@ impl ID3D11Texture1D {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetDesc(&self, pDesc: &mut D3D11_TEXTURE1D_DESC) {
-        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, pDesc as *mut _) }
+    pub unsafe fn GetDesc(&self) -> D3D11_TEXTURE1D_DESC {
+        let mut desc = core::mem::MaybeUninit::uninit();
+        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, desc.as_mut_ptr()) };
+        unsafe { desc.assume_init() }
     }
 }
 
@@ -653,8 +726,8 @@ pub struct ID3D11Texture2DVtbl {
 pub struct ID3D11Texture2D(pub *mut *const ID3D11Texture2DVtbl);
 
 impl ID3D11Texture2D {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -662,8 +735,10 @@ impl ID3D11Texture2D {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetDesc(&self, pDesc: &mut D3D11_TEXTURE2D_DESC) {
-        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, pDesc as *mut _) }
+    pub unsafe fn GetDesc(&self) -> D3D11_TEXTURE2D_DESC {
+        let mut desc = core::mem::MaybeUninit::uninit();
+        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, desc.as_mut_ptr()) };
+        unsafe { desc.assume_init() }
     }
 }
 
@@ -678,8 +753,8 @@ pub struct ID3D11Texture3DVtbl {
 pub struct ID3D11Texture3D(pub *mut *const ID3D11Texture3DVtbl);
 
 impl ID3D11Texture3D {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -687,8 +762,10 @@ impl ID3D11Texture3D {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetDesc(&self, pDesc: &mut D3D11_TEXTURE3D_DESC) {
-        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, pDesc as *mut _) }
+    pub unsafe fn GetDesc(&self) -> D3D11_TEXTURE3D_DESC {
+        let mut desc = core::mem::MaybeUninit::uninit();
+        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, desc.as_mut_ptr()) };
+        unsafe { desc.assume_init() }
     }
 }
 
@@ -704,8 +781,8 @@ pub struct ID3D11ViewVtbl {
 pub struct ID3D11View(pub *mut *const ID3D11ViewVtbl);
 
 impl ID3D11View {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -713,8 +790,10 @@ impl ID3D11View {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetResource(&self, ppResource: &mut ID3D11Resource) {
-        unsafe { ((*(*self.0)).GetResource)(self.0 as _, ppResource as *mut _ as _) }
+    pub unsafe fn GetResource(&self) -> ID3D11Resource {
+        let mut res = ID3D11Resource(core::ptr::null_mut());
+        unsafe { ((*(*self.0)).GetResource)(self.0 as _, &mut res.0 as *mut _ as _) };
+        res
     }
 }
 
@@ -730,8 +809,8 @@ pub struct ID3D11ShaderResourceViewVtbl {
 pub struct ID3D11ShaderResourceView(pub *mut *const ID3D11ShaderResourceViewVtbl);
 
 impl ID3D11ShaderResourceView {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -739,8 +818,10 @@ impl ID3D11ShaderResourceView {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetDesc(&self, pDesc: &mut D3D11_SHADER_RESOURCE_VIEW_DESC) {
-        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, pDesc as *mut _) }
+    pub unsafe fn GetDesc(&self) -> D3D11_SHADER_RESOURCE_VIEW_DESC {
+        let mut desc = core::mem::MaybeUninit::uninit();
+        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, desc.as_mut_ptr()) };
+        unsafe { desc.assume_init() }
     }
 }
 
@@ -756,8 +837,8 @@ pub struct ID3D11RenderTargetViewVtbl {
 pub struct ID3D11RenderTargetView(pub *mut *const ID3D11RenderTargetViewVtbl);
 
 impl ID3D11RenderTargetView {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -765,8 +846,10 @@ impl ID3D11RenderTargetView {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetDesc(&self, pDesc: &mut D3D11_RENDER_TARGET_VIEW_DESC) {
-        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, pDesc as *mut _) }
+    pub unsafe fn GetDesc(&self) -> D3D11_RENDER_TARGET_VIEW_DESC {
+        let mut desc = core::mem::MaybeUninit::uninit();
+        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, desc.as_mut_ptr()) };
+        unsafe { desc.assume_init() }
     }
 }
 
@@ -782,8 +865,8 @@ pub struct ID3D11DepthStencilViewVtbl {
 pub struct ID3D11DepthStencilView(pub *mut *const ID3D11DepthStencilViewVtbl);
 
 impl ID3D11DepthStencilView {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -791,8 +874,10 @@ impl ID3D11DepthStencilView {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetDesc(&self, pDesc: &mut D3D11_DEPTH_STENCIL_VIEW_DESC) {
-        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, pDesc as *mut _) }
+    pub unsafe fn GetDesc(&self) -> D3D11_DEPTH_STENCIL_VIEW_DESC {
+        let mut desc = core::mem::MaybeUninit::uninit();
+        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, desc.as_mut_ptr()) };
+        unsafe { desc.assume_init() }
     }
 }
 
@@ -808,8 +893,8 @@ pub struct ID3D11UnorderedAccessViewVtbl {
 pub struct ID3D11UnorderedAccessView(pub *mut *const ID3D11UnorderedAccessViewVtbl);
 
 impl ID3D11UnorderedAccessView {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -817,8 +902,10 @@ impl ID3D11UnorderedAccessView {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetDesc(&self, pDesc: &mut D3D11_UNORDERED_ACCESS_VIEW_DESC) {
-        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, pDesc as *mut _) }
+    pub unsafe fn GetDesc(&self) -> D3D11_UNORDERED_ACCESS_VIEW_DESC {
+        let mut desc = core::mem::MaybeUninit::uninit();
+        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, desc.as_mut_ptr()) };
+        unsafe { desc.assume_init() }
     }
 }
 
@@ -832,8 +919,8 @@ pub struct ID3D11VertexShaderVtbl {
 pub struct ID3D11VertexShader(pub *mut *const ID3D11VertexShaderVtbl);
 
 impl ID3D11VertexShader {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -853,8 +940,8 @@ pub struct ID3D11PixelShaderVtbl {
 pub struct ID3D11PixelShader(pub *mut *const ID3D11PixelShaderVtbl);
 
 impl ID3D11PixelShader {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -874,8 +961,71 @@ pub struct ID3D11ComputeShaderVtbl {
 pub struct ID3D11ComputeShader(pub *mut *const ID3D11ComputeShaderVtbl);
 
 impl ID3D11ComputeShader {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
+    }
+    pub unsafe fn AddRef(&self) -> u32 {
+        unsafe { IUnknown(self.0 as _).AddRef() }
+    }
+    pub unsafe fn Release(&self) -> u32 {
+        unsafe { IUnknown(self.0 as _).Release() }
+    }
+}
+
+#[repr(C)]
+pub struct ID3D11GeometryShaderVtbl {
+    pub base: ID3D11DeviceChildVtbl,
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ID3D11GeometryShader(pub *mut *const ID3D11GeometryShaderVtbl);
+
+impl ID3D11GeometryShader {
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
+    }
+    pub unsafe fn AddRef(&self) -> u32 {
+        unsafe { IUnknown(self.0 as _).AddRef() }
+    }
+    pub unsafe fn Release(&self) -> u32 {
+        unsafe { IUnknown(self.0 as _).Release() }
+    }
+}
+
+#[repr(C)]
+pub struct ID3D11HullShaderVtbl {
+    pub base: ID3D11DeviceChildVtbl,
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ID3D11HullShader(pub *mut *const ID3D11HullShaderVtbl);
+
+impl ID3D11HullShader {
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
+    }
+    pub unsafe fn AddRef(&self) -> u32 {
+        unsafe { IUnknown(self.0 as _).AddRef() }
+    }
+    pub unsafe fn Release(&self) -> u32 {
+        unsafe { IUnknown(self.0 as _).Release() }
+    }
+}
+
+#[repr(C)]
+pub struct ID3D11DomainShaderVtbl {
+    pub base: ID3D11DeviceChildVtbl,
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ID3D11DomainShader(pub *mut *const ID3D11DomainShaderVtbl);
+
+impl ID3D11DomainShader {
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -895,8 +1045,8 @@ pub struct ID3D11InputLayoutVtbl {
 pub struct ID3D11InputLayout(pub *mut *const ID3D11InputLayoutVtbl);
 
 impl ID3D11InputLayout {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -917,8 +1067,8 @@ pub struct ID3D11BlendStateVtbl {
 pub struct ID3D11BlendState(pub *mut *const ID3D11BlendStateVtbl);
 
 impl ID3D11BlendState {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -926,8 +1076,10 @@ impl ID3D11BlendState {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetDesc(&self, pDesc: &mut D3D11_BLEND_DESC) {
-        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, pDesc as *mut _) }
+    pub unsafe fn GetDesc(&self) -> D3D11_BLEND_DESC {
+        let mut desc = core::mem::MaybeUninit::uninit();
+        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, desc.as_mut_ptr()) };
+        unsafe { desc.assume_init() }
     }
 }
 
@@ -942,8 +1094,8 @@ pub struct ID3D11DepthStencilStateVtbl {
 pub struct ID3D11DepthStencilState(pub *mut *const ID3D11DepthStencilStateVtbl);
 
 impl ID3D11DepthStencilState {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -951,8 +1103,10 @@ impl ID3D11DepthStencilState {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetDesc(&self, pDesc: &mut D3D11_DEPTH_STENCIL_DESC) {
-        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, pDesc as *mut _) }
+    pub unsafe fn GetDesc(&self) -> D3D11_DEPTH_STENCIL_DESC {
+        let mut desc = core::mem::MaybeUninit::uninit();
+        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, desc.as_mut_ptr()) };
+        unsafe { desc.assume_init() }
     }
 }
 
@@ -967,8 +1121,8 @@ pub struct ID3D11RasterizerStateVtbl {
 pub struct ID3D11RasterizerState(pub *mut *const ID3D11RasterizerStateVtbl);
 
 impl ID3D11RasterizerState {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -976,8 +1130,10 @@ impl ID3D11RasterizerState {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetDesc(&self, pDesc: &mut D3D11_RASTERIZER_DESC) {
-        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, pDesc as *mut _) }
+    pub unsafe fn GetDesc(&self) -> D3D11_RASTERIZER_DESC {
+        let mut desc = core::mem::MaybeUninit::uninit();
+        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, desc.as_mut_ptr()) };
+        unsafe { desc.assume_init() }
     }
 }
 
@@ -992,8 +1148,8 @@ pub struct ID3D11SamplerStateVtbl {
 pub struct ID3D11SamplerState(pub *mut *const ID3D11SamplerStateVtbl);
 
 impl ID3D11SamplerState {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -1001,8 +1157,37 @@ impl ID3D11SamplerState {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetDesc(&self, pDesc: &mut D3D11_SAMPLER_DESC) {
-        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, pDesc as *mut _) }
+    pub unsafe fn GetDesc(&self) -> D3D11_SAMPLER_DESC {
+        let mut desc = core::mem::MaybeUninit::uninit();
+        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, desc.as_mut_ptr()) };
+        unsafe { desc.assume_init() }
+    }
+}
+
+#[repr(C)]
+pub struct ID3D11QueryVtbl {
+    pub base: ID3D11DeviceChildVtbl,
+    pub GetDesc: unsafe extern "system" fn(this: *mut c_void, pDesc: *mut D3D11_QUERY_DESC),
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ID3D11Query(pub *mut *const ID3D11QueryVtbl);
+
+impl ID3D11Query {
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
+    }
+    pub unsafe fn AddRef(&self) -> u32 {
+        unsafe { IUnknown(self.0 as _).AddRef() }
+    }
+    pub unsafe fn Release(&self) -> u32 {
+        unsafe { IUnknown(self.0 as _).Release() }
+    }
+    pub unsafe fn GetDesc(&self) -> D3D11_QUERY_DESC {
+        let mut desc = core::mem::MaybeUninit::uninit();
+        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, desc.as_mut_ptr()) };
+        unsafe { desc.assume_init() }
     }
 }
 
@@ -1593,8 +1778,8 @@ pub struct ID3D11DeviceContextVtbl {
 pub struct ID3D11DeviceContext(pub *mut *const ID3D11DeviceContextVtbl);
 
 impl ID3D11DeviceContext {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -1629,11 +1814,11 @@ impl ID3D11DeviceContext {
     pub unsafe fn PSSetShader(
         &self,
         pPixelShader: Option<&ID3D11PixelShader>,
-        ppClassInstances: Option<&[*mut c_void]>,
+        ppClassInstances: Option<&[IUnknown]>,
     ) {
         let shader = pPixelShader.map_or(core::ptr::null_mut(), |s| s.0 as _);
         let (inst_ptr, inst_count) = match ppClassInstances {
-            Some(s) => (s.as_ptr(), s.len() as u32),
+            Some(s) => (s.as_ptr() as *const *mut c_void, s.len() as u32),
             None => (core::ptr::null(), 0),
         };
         unsafe { ((*(*self.0)).PSSetShader)(self.0 as _, shader, inst_ptr, inst_count) }
@@ -1651,11 +1836,11 @@ impl ID3D11DeviceContext {
     pub unsafe fn VSSetShader(
         &self,
         pVertexShader: Option<&ID3D11VertexShader>,
-        ppClassInstances: Option<&[*mut c_void]>,
+        ppClassInstances: Option<&[IUnknown]>,
     ) {
         let shader = pVertexShader.map_or(core::ptr::null_mut(), |s| s.0 as _);
         let (inst_ptr, inst_count) = match ppClassInstances {
-            Some(s) => (s.as_ptr(), s.len() as u32),
+            Some(s) => (s.as_ptr() as *const *mut c_void, s.len() as u32),
             None => (core::ptr::null(), 0),
         };
         unsafe { ((*(*self.0)).VSSetShader)(self.0 as _, shader, inst_ptr, inst_count) }
@@ -1684,18 +1869,19 @@ impl ID3D11DeviceContext {
         Subresource: u32,
         MapType: D3D11_MAP,
         MapFlags: u32,
-        pMappedResource: &mut D3D11_MAPPED_SUBRESOURCE,
-    ) -> HRESULT {
-        unsafe {
+    ) -> Result<D3D11_MAPPED_SUBRESOURCE, HRESULT> {
+        let mut mapped = core::mem::MaybeUninit::uninit();
+        let hr = unsafe {
             ((*(*self.0)).Map)(
                 self.0 as _,
                 pResource.0 as _,
                 Subresource,
                 MapType,
                 MapFlags,
-                pMappedResource as *mut _,
+                mapped.as_mut_ptr(),
             )
-        }
+        };
+        if hr >= 0 { Ok(unsafe { mapped.assume_init() }) } else { Err(hr) }
     }
     pub unsafe fn Unmap(&self, pResource: &ID3D11Resource, Subresource: u32) {
         unsafe { ((*(*self.0)).Unmap)(self.0 as _, pResource.0 as _, Subresource) }
@@ -1789,12 +1975,12 @@ impl ID3D11DeviceContext {
     }
     pub unsafe fn GSSetShader(
         &self,
-        pShader: Option<*mut c_void>,
-        ppClassInstances: Option<&[*mut c_void]>,
+        pShader: Option<&ID3D11GeometryShader>,
+        ppClassInstances: Option<&[IUnknown]>,
     ) {
-        let sh = pShader.unwrap_or(core::ptr::null_mut());
+        let sh = pShader.map_or(core::ptr::null_mut(), |s| s.0 as _);
         let (inst_ptr, inst_count) = match ppClassInstances {
-            Some(s) => (s.as_ptr(), s.len() as u32),
+            Some(s) => (s.as_ptr() as *const *mut c_void, s.len() as u32),
             None => (core::ptr::null(), 0),
         };
         unsafe { ((*(*self.0)).GSSetShader)(self.0 as _, sh, inst_ptr, inst_count) }
@@ -1826,23 +2012,27 @@ impl ID3D11DeviceContext {
             )
         }
     }
-    pub unsafe fn Begin(&self, pAsync: *mut c_void) {
-        unsafe { ((*(*self.0)).Begin)(self.0 as _, pAsync) }
+    pub unsafe fn Begin(&self, pAsync: &IUnknown) {
+        unsafe { ((*(*self.0)).Begin)(self.0 as _, pAsync.0 as _) }
     }
-    pub unsafe fn End(&self, pAsync: *mut c_void) {
-        unsafe { ((*(*self.0)).End)(self.0 as _, pAsync) }
+    pub unsafe fn End(&self, pAsync: &IUnknown) {
+        unsafe { ((*(*self.0)).End)(self.0 as _, pAsync.0 as _) }
     }
     pub unsafe fn GetData(
         &self,
-        pAsync: *mut c_void,
-        pData: *mut c_void,
-        DataSize: u32,
+        pAsync: &IUnknown,
+        pData: Option<&mut [u8]>,
         GetDataFlags: u32,
-    ) -> HRESULT {
-        unsafe { ((*(*self.0)).GetData)(self.0 as _, pAsync, pData, DataSize, GetDataFlags) }
+    ) -> Result<u32, HRESULT> {
+        let (ptr, size) = match pData {
+            Some(s) => (s.as_mut_ptr() as *mut c_void, s.len() as u32),
+            None => (core::ptr::null_mut(), 0),
+        };
+        let hr = unsafe { ((*(*self.0)).GetData)(self.0 as _, pAsync.0 as _, ptr, size, GetDataFlags) };
+        if hr >= 0 { Ok(size) } else { Err(hr) }
     }
-    pub unsafe fn SetPredication(&self, pPredicate: Option<*mut c_void>, PredicateValue: BOOL) {
-        let pred = pPredicate.unwrap_or(core::ptr::null_mut());
+    pub unsafe fn SetPredication(&self, pPredicate: Option<&IUnknown>, PredicateValue: BOOL) {
+        let pred = pPredicate.map_or(core::ptr::null_mut(), |p| p.0 as _);
         unsafe { ((*(*self.0)).SetPredication)(self.0 as _, pred, PredicateValue) }
     }
     pub unsafe fn GSSetShaderResources(
@@ -2041,12 +2231,12 @@ impl ID3D11DeviceContext {
             ((*(*self.0)).CopyResource)(self.0 as _, pDstResource.0 as _, pSrcResource.0 as _)
         }
     }
-    pub unsafe fn UpdateSubresource(
+    pub unsafe fn UpdateSubresource<T>(
         &self,
         pDstResource: &ID3D11Resource,
         DstSubresource: u32,
         pDstBox: Option<&D3D11_BOX>,
-        pSrcData: *const c_void,
+        pSrcData: &[T],
         SrcRowPitch: u32,
         SrcDepthPitch: u32,
     ) {
@@ -2057,7 +2247,7 @@ impl ID3D11DeviceContext {
                 pDstResource.0 as _,
                 DstSubresource,
                 db,
-                pSrcData,
+                pSrcData.as_ptr() as _,
                 SrcRowPitch,
                 SrcDepthPitch,
             )
@@ -2162,8 +2352,8 @@ impl ID3D11DeviceContext {
             )
         }
     }
-    pub unsafe fn ExecuteCommandList(&self, pCommandList: *mut c_void, RestoreContextState: BOOL) {
-        unsafe { ((*(*self.0)).ExecuteCommandList)(self.0 as _, pCommandList, RestoreContextState) }
+    pub unsafe fn ExecuteCommandList(&self, pCommandList: &IUnknown, RestoreContextState: BOOL) {
+        unsafe { ((*(*self.0)).ExecuteCommandList)(self.0 as _, pCommandList.0 as _, RestoreContextState) }
     }
     pub unsafe fn HSSetShaderResources(
         &self,
@@ -2181,12 +2371,12 @@ impl ID3D11DeviceContext {
     }
     pub unsafe fn HSSetShader(
         &self,
-        pHullShader: Option<*mut c_void>,
-        ppClassInstances: Option<&[*mut c_void]>,
+        pHullShader: Option<&ID3D11HullShader>,
+        ppClassInstances: Option<&[IUnknown]>,
     ) {
-        let sh = pHullShader.unwrap_or(core::ptr::null_mut());
+        let sh = pHullShader.map_or(core::ptr::null_mut(), |s| s.0 as _);
         let (inst_ptr, inst_count) = match ppClassInstances {
-            Some(s) => (s.as_ptr(), s.len() as u32),
+            Some(s) => (s.as_ptr() as *const *mut c_void, s.len() as u32),
             None => (core::ptr::null(), 0),
         };
         unsafe { ((*(*self.0)).HSSetShader)(self.0 as _, sh, inst_ptr, inst_count) }
@@ -2227,12 +2417,12 @@ impl ID3D11DeviceContext {
     }
     pub unsafe fn DSSetShader(
         &self,
-        pDomainShader: Option<*mut c_void>,
-        ppClassInstances: Option<&[*mut c_void]>,
+        pDomainShader: Option<&ID3D11DomainShader>,
+        ppClassInstances: Option<&[IUnknown]>,
     ) {
-        let sh = pDomainShader.unwrap_or(core::ptr::null_mut());
+        let sh = pDomainShader.map_or(core::ptr::null_mut(), |s| s.0 as _);
         let (inst_ptr, inst_count) = match ppClassInstances {
-            Some(s) => (s.as_ptr(), s.len() as u32),
+            Some(s) => (s.as_ptr() as *const *mut c_void, s.len() as u32),
             None => (core::ptr::null(), 0),
         };
         unsafe { ((*(*self.0)).DSSetShader)(self.0 as _, sh, inst_ptr, inst_count) }
@@ -2291,11 +2481,11 @@ impl ID3D11DeviceContext {
     pub unsafe fn CSSetShader(
         &self,
         pComputeShader: Option<&ID3D11ComputeShader>,
-        ppClassInstances: Option<&[*mut c_void]>,
+        ppClassInstances: Option<&[IUnknown]>,
     ) {
         let sh = pComputeShader.map_or(core::ptr::null_mut(), |s| s.0 as _);
         let (inst_ptr, inst_count) = match ppClassInstances {
-            Some(s) => (s.as_ptr(), s.len() as u32),
+            Some(s) => (s.as_ptr() as *const *mut c_void, s.len() as u32),
             None => (core::ptr::null(), 0),
         };
         unsafe { ((*(*self.0)).CSSetShader)(self.0 as _, sh, inst_ptr, inst_count) }
@@ -2350,22 +2540,22 @@ impl ID3D11DeviceContext {
     }
     pub unsafe fn PSGetShader(
         &self,
-        ppPixelShader: &mut ID3D11PixelShader,
-        ppClassInstances: Option<&mut [*mut c_void]>,
-        pNumClassInstances: Option<&mut u32>,
-    ) {
-        let (inst_ptr, inst_count) = match (ppClassInstances, pNumClassInstances) {
-            (Some(s), Some(c)) => (s.as_mut_ptr(), c as *mut _),
-            _ => (core::ptr::null_mut(), core::ptr::null_mut()),
+        ppClassInstances: Option<&mut [IUnknown]>,
+    ) -> Option<ID3D11PixelShader> {
+        let mut shader = ID3D11PixelShader(core::ptr::null_mut());
+        let (inst_ptr, mut inst_count) = match ppClassInstances {
+            Some(s) => (s.as_mut_ptr() as *mut *mut c_void, s.len() as u32),
+            None => (core::ptr::null_mut(), 0),
         };
         unsafe {
             ((*(*self.0)).PSGetShader)(
                 self.0 as _,
-                ppPixelShader as *mut _ as _,
+                &mut shader.0 as *mut _ as _,
                 inst_ptr,
-                inst_count,
+                &mut inst_count,
             )
-        }
+        };
+        if !shader.0.is_null() { Some(shader) } else { None }
     }
     pub unsafe fn PSGetSamplers(&self, StartSlot: u32, ppSamplers: &mut [ID3D11SamplerState]) {
         unsafe {
@@ -2379,22 +2569,22 @@ impl ID3D11DeviceContext {
     }
     pub unsafe fn VSGetShader(
         &self,
-        ppVertexShader: &mut ID3D11VertexShader,
-        ppClassInstances: Option<&mut [*mut c_void]>,
-        pNumClassInstances: Option<&mut u32>,
-    ) {
-        let (inst_ptr, inst_count) = match (ppClassInstances, pNumClassInstances) {
-            (Some(s), Some(c)) => (s.as_mut_ptr(), c as *mut _),
-            _ => (core::ptr::null_mut(), core::ptr::null_mut()),
+        ppClassInstances: Option<&mut [IUnknown]>,
+    ) -> Option<ID3D11VertexShader> {
+        let mut shader = ID3D11VertexShader(core::ptr::null_mut());
+        let (inst_ptr, mut inst_count) = match ppClassInstances {
+            Some(s) => (s.as_mut_ptr() as *mut *mut c_void, s.len() as u32),
+            None => (core::ptr::null_mut(), 0),
         };
         unsafe {
             ((*(*self.0)).VSGetShader)(
                 self.0 as _,
-                ppVertexShader as *mut _ as _,
+                &mut shader.0 as *mut _ as _,
                 inst_ptr,
-                inst_count,
+                &mut inst_count,
             )
-        }
+        };
+        if !shader.0.is_null() { Some(shader) } else { None }
     }
     pub unsafe fn PSGetConstantBuffers(
         &self,
@@ -2410,8 +2600,10 @@ impl ID3D11DeviceContext {
             )
         }
     }
-    pub unsafe fn IAGetInputLayout(&self, ppInputLayout: &mut ID3D11InputLayout) {
-        unsafe { ((*(*self.0)).IAGetInputLayout)(self.0 as _, ppInputLayout as *mut _ as _) }
+    pub unsafe fn IAGetInputLayout(&self) -> Option<ID3D11InputLayout> {
+        let mut layout = ID3D11InputLayout(core::ptr::null_mut());
+        unsafe { ((*(*self.0)).IAGetInputLayout)(self.0 as _, &mut layout.0 as *mut _ as _) };
+        if !layout.0.is_null() { Some(layout) } else { None }
     }
     pub unsafe fn IAGetVertexBuffers(
         &self,
@@ -2435,20 +2627,20 @@ impl ID3D11DeviceContext {
             )
         }
     }
-    pub unsafe fn IAGetIndexBuffer(
-        &self,
-        ppIndexBuffer: &mut ID3D11Buffer,
-        Format: &mut DXGI_FORMAT,
-        Offset: &mut u32,
-    ) {
+    pub unsafe fn IAGetIndexBuffer(&self) -> (Option<ID3D11Buffer>, DXGI_FORMAT, u32) {
+        let mut buf = ID3D11Buffer(core::ptr::null_mut());
+        let mut fmt = DXGI_FORMAT::UNKNOWN;
+        let mut offset = 0u32;
         unsafe {
             ((*(*self.0)).IAGetIndexBuffer)(
                 self.0 as _,
-                ppIndexBuffer as *mut _ as _,
-                Format as *mut _,
-                Offset as *mut _,
+                &mut buf.0 as *mut _ as _,
+                &mut fmt as *mut _,
+                &mut offset,
             )
-        }
+        };
+        let b_opt = if !buf.0.is_null() { Some(buf) } else { None };
+        (b_opt, fmt, offset)
     }
     pub unsafe fn GSGetConstantBuffers(
         &self,
@@ -2466,25 +2658,27 @@ impl ID3D11DeviceContext {
     }
     pub unsafe fn GSGetShader(
         &self,
-        ppGeometryShader: &mut *mut c_void,
-        ppClassInstances: Option<&mut [*mut c_void]>,
-        pNumClassInstances: Option<&mut u32>,
-    ) {
-        let (inst_ptr, inst_count) = match (ppClassInstances, pNumClassInstances) {
-            (Some(s), Some(c)) => (s.as_mut_ptr(), c as *mut _),
-            _ => (core::ptr::null_mut(), core::ptr::null_mut()),
+        ppClassInstances: Option<&mut [IUnknown]>,
+    ) -> Option<ID3D11GeometryShader> {
+        let mut shader = ID3D11GeometryShader(core::ptr::null_mut());
+        let (inst_ptr, mut inst_count) = match ppClassInstances {
+            Some(s) => (s.as_mut_ptr() as *mut *mut c_void, s.len() as u32),
+            None => (core::ptr::null_mut(), 0),
         };
         unsafe {
             ((*(*self.0)).GSGetShader)(
                 self.0 as _,
-                ppGeometryShader as *mut _,
+                &mut shader.0 as *mut _ as _,
                 inst_ptr,
-                inst_count,
+                &mut inst_count,
             )
-        }
+        };
+        if !shader.0.is_null() { Some(shader) } else { None }
     }
-    pub unsafe fn IAGetPrimitiveTopology(&self, pTopology: &mut D3D_PRIMITIVE_TOPOLOGY) {
-        unsafe { ((*(*self.0)).IAGetPrimitiveTopology)(self.0 as _, pTopology as *mut _) }
+    pub unsafe fn IAGetPrimitiveTopology(&self) -> D3D_PRIMITIVE_TOPOLOGY {
+        let mut top = D3D_PRIMITIVE_TOPOLOGY::UNDEFINED;
+        unsafe { ((*(*self.0)).IAGetPrimitiveTopology)(self.0 as _, &mut top as *mut _) };
+        top
     }
     pub unsafe fn VSGetShaderResources(
         &self,
@@ -2510,14 +2704,18 @@ impl ID3D11DeviceContext {
             )
         }
     }
-    pub unsafe fn GetPredication(&self, ppPredicate: &mut *mut c_void, pPredicateValue: &mut BOOL) {
+    pub unsafe fn GetPredication(&self) -> (Option<IUnknown>, BOOL) {
+        let mut pred = IUnknown(core::ptr::null_mut());
+        let mut val = 0;
         unsafe {
             ((*(*self.0)).GetPredication)(
                 self.0 as _,
-                ppPredicate as *mut _,
-                pPredicateValue as *mut _,
+                &mut pred.0 as *mut _ as _,
+                &mut val,
             )
-        }
+        };
+        let p_opt = if !pred.0.is_null() { Some(pred) } else { None };
+        (p_opt, val)
     }
     pub unsafe fn GSGetShaderResources(
         &self,
@@ -2546,63 +2744,65 @@ impl ID3D11DeviceContext {
     pub unsafe fn OMGetRenderTargets(
         &self,
         ppRenderTargetViews: &mut [ID3D11RenderTargetView],
-        ppDepthStencilView: Option<&mut ID3D11DepthStencilView>,
-    ) {
-        let dsv = ppDepthStencilView.map_or(core::ptr::null_mut(), |d| d as *mut _ as _);
+    ) -> Option<ID3D11DepthStencilView> {
+        let mut dsv = ID3D11DepthStencilView(core::ptr::null_mut());
         unsafe {
             ((*(*self.0)).OMGetRenderTargets)(
                 self.0 as _,
                 ppRenderTargetViews.len() as u32,
                 ppRenderTargetViews.as_mut_ptr() as _,
-                dsv,
+                &mut dsv.0 as *mut _ as _,
             )
-        }
+        };
+        if !dsv.0.is_null() { Some(dsv) } else { None }
     }
     pub unsafe fn OMGetRenderTargetsAndUnorderedAccessViews(
         &self,
         ppRenderTargetViews: &mut [ID3D11RenderTargetView],
-        ppDepthStencilView: Option<&mut ID3D11DepthStencilView>,
         UAVStartSlot: u32,
         ppUnorderedAccessViews: &mut [ID3D11UnorderedAccessView],
-    ) {
-        let dsv = ppDepthStencilView.map_or(core::ptr::null_mut(), |d| d as *mut _ as _);
+    ) -> Option<ID3D11DepthStencilView> {
+        let mut dsv = ID3D11DepthStencilView(core::ptr::null_mut());
         unsafe {
             ((*(*self.0)).OMGetRenderTargetsAndUnorderedAccessViews)(
                 self.0 as _,
                 ppRenderTargetViews.len() as u32,
                 ppRenderTargetViews.as_mut_ptr() as _,
-                dsv,
+                &mut dsv.0 as *mut _ as _,
                 UAVStartSlot,
                 ppUnorderedAccessViews.len() as u32,
                 ppUnorderedAccessViews.as_mut_ptr() as _,
             )
-        }
+        };
+        if !dsv.0.is_null() { Some(dsv) } else { None }
     }
-    pub unsafe fn OMGetBlendState(
-        &self,
-        ppBlendState: &mut ID3D11BlendState,
-        BlendFactor: Option<&mut [f32; 4]>,
-        pSampleMask: Option<&mut u32>,
-    ) {
-        let factor = BlendFactor.map_or(core::ptr::null_mut(), |f| f as *mut _);
-        let mask = pSampleMask.map_or(core::ptr::null_mut(), |m| m as *mut _);
+    pub unsafe fn OMGetBlendState(&self) -> (Option<ID3D11BlendState>, [f32; 4], u32) {
+        let mut state = ID3D11BlendState(core::ptr::null_mut());
+        let mut factor = [0.0f32; 4];
+        let mut mask = 0u32;
         unsafe {
-            ((*(*self.0)).OMGetBlendState)(self.0 as _, ppBlendState as *mut _ as _, factor, mask)
-        }
+            ((*(*self.0)).OMGetBlendState)(
+                self.0 as _,
+                &mut state.0 as *mut _ as _,
+                &mut factor,
+                &mut mask,
+            )
+        };
+        let s_opt = if !state.0.is_null() { Some(state) } else { None };
+        (s_opt, factor, mask)
     }
-    pub unsafe fn OMGetDepthStencilState(
-        &self,
-        ppDepthStencilState: &mut ID3D11DepthStencilState,
-        pStencilRef: Option<&mut u32>,
-    ) {
-        let sref = pStencilRef.map_or(core::ptr::null_mut(), |s| s as *mut _);
+    pub unsafe fn OMGetDepthStencilState(&self) -> (Option<ID3D11DepthStencilState>, u32) {
+        let mut state = ID3D11DepthStencilState(core::ptr::null_mut());
+        let mut sref = 0u32;
         unsafe {
             ((*(*self.0)).OMGetDepthStencilState)(
                 self.0 as _,
-                ppDepthStencilState as *mut _ as _,
-                sref,
+                &mut state.0 as *mut _ as _,
+                &mut sref,
             )
-        }
+        };
+        let s_opt = if !state.0.is_null() { Some(state) } else { None };
+        (s_opt, sref)
     }
     pub unsafe fn SOGetTargets(&self, ppSOTargets: &mut [ID3D11Buffer]) {
         unsafe {
@@ -2613,20 +2813,29 @@ impl ID3D11DeviceContext {
             )
         }
     }
-    pub unsafe fn RSGetState(&self, ppRasterizerState: &mut ID3D11RasterizerState) {
-        unsafe { ((*(*self.0)).RSGetState)(self.0 as _, ppRasterizerState as *mut _ as _) }
+    pub unsafe fn RSGetState(&self) -> Option<ID3D11RasterizerState> {
+        let mut rs = ID3D11RasterizerState(core::ptr::null_mut());
+        unsafe { ((*(*self.0)).RSGetState)(self.0 as _, &mut rs.0 as *mut _ as _) };
+        if !rs.0.is_null() { Some(rs) } else { None }
     }
     pub unsafe fn RSGetViewports(
         &self,
-        pNumViewports: &mut u32,
         pViewports: Option<&mut [D3D11_VIEWPORT]>,
-    ) {
-        let vp = pViewports.map_or(core::ptr::null_mut(), |v| v.as_mut_ptr());
-        unsafe { ((*(*self.0)).RSGetViewports)(self.0 as _, pNumViewports as *mut _, vp) }
+    ) -> u32 {
+        let (vp, mut count) = match pViewports {
+            Some(s) => (s.as_mut_ptr(), s.len() as u32),
+            None => (core::ptr::null_mut(), 0),
+        };
+        unsafe { ((*(*self.0)).RSGetViewports)(self.0 as _, &mut count, vp) };
+        count
     }
-    pub unsafe fn RSGetScissorRects(&self, pNumRects: &mut u32, pRects: Option<&mut [RECT]>) {
-        let rects = pRects.map_or(core::ptr::null_mut(), |r| r.as_mut_ptr());
-        unsafe { ((*(*self.0)).RSGetScissorRects)(self.0 as _, pNumRects as *mut _, rects) }
+    pub unsafe fn RSGetScissorRects(&self, pRects: Option<&mut [RECT]>) -> u32 {
+        let (rects, mut count) = match pRects {
+            Some(r) => (r.as_mut_ptr(), r.len() as u32),
+            None => (core::ptr::null_mut(), 0),
+        };
+        unsafe { ((*(*self.0)).RSGetScissorRects)(self.0 as _, &mut count, rects) };
+        count
     }
     pub unsafe fn HSGetShaderResources(
         &self,
@@ -2644,17 +2853,22 @@ impl ID3D11DeviceContext {
     }
     pub unsafe fn HSGetShader(
         &self,
-        ppHullShader: &mut *mut c_void,
-        ppClassInstances: Option<&mut [*mut c_void]>,
-        pNumClassInstances: Option<&mut u32>,
-    ) {
-        let (inst_ptr, inst_count) = match (ppClassInstances, pNumClassInstances) {
-            (Some(s), Some(c)) => (s.as_mut_ptr(), c as *mut _),
-            _ => (core::ptr::null_mut(), core::ptr::null_mut()),
+        ppClassInstances: Option<&mut [IUnknown]>,
+    ) -> Option<ID3D11HullShader> {
+        let mut shader = ID3D11HullShader(core::ptr::null_mut());
+        let (inst_ptr, mut inst_count) = match ppClassInstances {
+            Some(s) => (s.as_mut_ptr() as *mut *mut c_void, s.len() as u32),
+            None => (core::ptr::null_mut(), 0),
         };
         unsafe {
-            ((*(*self.0)).HSGetShader)(self.0 as _, ppHullShader as *mut _, inst_ptr, inst_count)
-        }
+            ((*(*self.0)).HSGetShader)(
+                self.0 as _,
+                &mut shader.0 as *mut _ as _,
+                inst_ptr,
+                &mut inst_count,
+            )
+        };
+        if !shader.0.is_null() { Some(shader) } else { None }
     }
     pub unsafe fn HSGetSamplers(&self, StartSlot: u32, ppSamplers: &mut [ID3D11SamplerState]) {
         unsafe {
@@ -2696,17 +2910,22 @@ impl ID3D11DeviceContext {
     }
     pub unsafe fn DSGetShader(
         &self,
-        ppDomainShader: &mut *mut c_void,
-        ppClassInstances: Option<&mut [*mut c_void]>,
-        pNumClassInstances: Option<&mut u32>,
-    ) {
-        let (inst_ptr, inst_count) = match (ppClassInstances, pNumClassInstances) {
-            (Some(s), Some(c)) => (s.as_mut_ptr(), c as *mut _),
-            _ => (core::ptr::null_mut(), core::ptr::null_mut()),
+        ppClassInstances: Option<&mut [IUnknown]>,
+    ) -> Option<ID3D11DomainShader> {
+        let mut shader = ID3D11DomainShader(core::ptr::null_mut());
+        let (inst_ptr, mut inst_count) = match ppClassInstances {
+            Some(s) => (s.as_mut_ptr() as *mut *mut c_void, s.len() as u32),
+            None => (core::ptr::null_mut(), 0),
         };
         unsafe {
-            ((*(*self.0)).DSGetShader)(self.0 as _, ppDomainShader as *mut _, inst_ptr, inst_count)
-        }
+            ((*(*self.0)).DSGetShader)(
+                self.0 as _,
+                &mut shader.0 as *mut _ as _,
+                inst_ptr,
+                &mut inst_count,
+            )
+        };
+        if !shader.0.is_null() { Some(shader) } else { None }
     }
     pub unsafe fn DSGetSamplers(&self, StartSlot: u32, ppSamplers: &mut [ID3D11SamplerState]) {
         unsafe {
@@ -2762,22 +2981,22 @@ impl ID3D11DeviceContext {
     }
     pub unsafe fn CSGetShader(
         &self,
-        ppComputeShader: &mut ID3D11ComputeShader,
-        ppClassInstances: Option<&mut [*mut c_void]>,
-        pNumClassInstances: Option<&mut u32>,
-    ) {
-        let (inst_ptr, inst_count) = match (ppClassInstances, pNumClassInstances) {
-            (Some(s), Some(c)) => (s.as_mut_ptr(), c as *mut _),
-            _ => (core::ptr::null_mut(), core::ptr::null_mut()),
+        ppClassInstances: Option<&mut [IUnknown]>,
+    ) -> Option<ID3D11ComputeShader> {
+        let mut shader = ID3D11ComputeShader(core::ptr::null_mut());
+        let (inst_ptr, mut inst_count) = match ppClassInstances {
+            Some(s) => (s.as_mut_ptr() as *mut *mut c_void, s.len() as u32),
+            None => (core::ptr::null_mut(), 0),
         };
         unsafe {
             ((*(*self.0)).CSGetShader)(
                 self.0 as _,
-                ppComputeShader as *mut _ as _,
+                &mut shader.0 as *mut _ as _,
                 inst_ptr,
-                inst_count,
+                &mut inst_count,
             )
-        }
+        };
+        if !shader.0.is_null() { Some(shader) } else { None }
     }
     pub unsafe fn CSGetSamplers(&self, StartSlot: u32, ppSamplers: &mut [ID3D11SamplerState]) {
         unsafe {
@@ -2815,15 +3034,16 @@ impl ID3D11DeviceContext {
     pub unsafe fn FinishCommandList(
         &self,
         RestoreDeferredContextState: BOOL,
-        ppCommandList: &mut *mut c_void,
-    ) -> HRESULT {
-        unsafe {
+    ) -> Result<IUnknown, HRESULT> {
+        let mut cmd_list = IUnknown(core::ptr::null_mut());
+        let hr = unsafe {
             ((*(*self.0)).FinishCommandList)(
                 self.0 as _,
                 RestoreDeferredContextState,
-                ppCommandList as *mut _,
+                &mut cmd_list.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(cmd_list) } else { Err(hr) }
     }
 }
 
@@ -2898,19 +3118,19 @@ pub struct ID3D11DeviceVtbl {
         pShaderBytecode: *const c_void,
         BytecodeLength: usize,
         pClassLinkage: *mut c_void,
-        ppGeometryShader: *mut *mut c_void,
+        ppGeometryShader: *mut *mut ID3D11GeometryShader,
     ) -> HRESULT,
     pub CreateGeometryShaderWithStreamOutput: unsafe extern "system" fn(
         this: *mut c_void,
         pShaderBytecode: *const c_void,
         BytecodeLength: usize,
-        pSODeclaration: *const c_void,
+        pSODeclaration: *const D3D11_SO_DECLARATION_ENTRY,
         NumEntries: u32,
         pBufferStrides: *const u32,
         NumStrides: u32,
         RasterizedStream: u32,
         pClassLinkage: *mut c_void,
-        ppGeometryShader: *mut *mut c_void,
+        ppGeometryShader: *mut *mut ID3D11GeometryShader,
     ) -> HRESULT,
     pub CreatePixelShader: unsafe extern "system" fn(
         this: *mut c_void,
@@ -2924,14 +3144,14 @@ pub struct ID3D11DeviceVtbl {
         pShaderBytecode: *const c_void,
         BytecodeLength: usize,
         pClassLinkage: *mut c_void,
-        ppHullShader: *mut *mut c_void,
+        ppHullShader: *mut *mut ID3D11HullShader,
     ) -> HRESULT,
     pub CreateDomainShader: unsafe extern "system" fn(
         this: *mut c_void,
         pShaderBytecode: *const c_void,
         BytecodeLength: usize,
         pClassLinkage: *mut c_void,
-        ppDomainShader: *mut *mut c_void,
+        ppDomainShader: *mut *mut ID3D11DomainShader,
     ) -> HRESULT,
     pub CreateComputeShader: unsafe extern "system" fn(
         this: *mut c_void,
@@ -2965,7 +3185,7 @@ pub struct ID3D11DeviceVtbl {
     pub CreateQuery: unsafe extern "system" fn(
         this: *mut c_void,
         pQueryDesc: *const D3D11_QUERY_DESC,
-        ppQuery: *mut *mut c_void,
+        ppQuery: *mut *mut ID3D11Query,
     ) -> HRESULT,
     pub CreatePredicate: unsafe extern "system" fn(
         this: *mut c_void,
@@ -2988,11 +3208,11 @@ pub struct ID3D11DeviceVtbl {
         SampleCount: u32,
         pNumQualityLevels: *mut u32,
     ) -> HRESULT,
-    pub CheckCounterInfo: unsafe extern "system" fn(this: *mut c_void, pCounterInfo: *mut c_void),
+    pub CheckCounterInfo: unsafe extern "system" fn(this: *mut c_void, pCounterInfo: *mut D3D11_COUNTER_INFO),
     pub CheckCounter: unsafe extern "system" fn(
         this: *mut c_void,
         pDesc: *const D3D11_COUNTER_DESC,
-        pType: *mut u32,
+        pType: *mut D3D11_COUNTER_TYPE,
         pActiveCounters: *mut u32,
         szName: *mut u8,
         pNameLength: *mut u32,
@@ -3003,7 +3223,7 @@ pub struct ID3D11DeviceVtbl {
     ) -> HRESULT,
     pub CheckFeatureSupport: unsafe extern "system" fn(
         this: *mut c_void,
-        Feature: u32,
+        Feature: D3D11_FEATURE,
         pFeatureSupportData: *mut c_void,
         FeatureSupportDataSize: u32,
     ) -> HRESULT,
@@ -3040,8 +3260,8 @@ pub struct ID3D11DeviceVtbl {
 pub struct ID3D11Device(pub *mut *const ID3D11DeviceVtbl);
 
 impl ID3D11Device {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -3053,337 +3273,506 @@ impl ID3D11Device {
         &self,
         pDesc: &D3D11_BUFFER_DESC,
         pInitialData: Option<&D3D11_SUBRESOURCE_DATA>,
-        ppBuffer: &mut ID3D11Buffer,
-    ) -> HRESULT {
+    ) -> Result<ID3D11Buffer, HRESULT> {
+        let mut buffer = ID3D11Buffer(core::ptr::null_mut());
         let init_data = pInitialData.map_or(core::ptr::null(), |d| d as *const _);
-        unsafe {
+        let hr = unsafe {
             ((*(*self.0)).CreateBuffer)(
                 self.0 as _,
                 pDesc as *const _,
                 init_data,
-                ppBuffer as *mut _ as _,
+                &mut buffer.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(buffer) } else { Err(hr) }
     }
     pub unsafe fn CreateTexture1D(
         &self,
         pDesc: &D3D11_TEXTURE1D_DESC,
-        pInitialData: Option<&D3D11_SUBRESOURCE_DATA>,
-        ppTexture1D: &mut ID3D11Texture1D,
-    ) -> HRESULT {
-        let init_data = pInitialData.map_or(core::ptr::null(), |d| d as *const _);
-        unsafe {
+        pInitialData: Option<&[D3D11_SUBRESOURCE_DATA]>,
+    ) -> Result<ID3D11Texture1D, HRESULT> {
+        let mut tex = ID3D11Texture1D(core::ptr::null_mut());
+        let init_data = pInitialData.map_or(core::ptr::null(), |d| d.as_ptr());
+        let hr = unsafe {
             ((*(*self.0)).CreateTexture1D)(
                 self.0 as _,
                 pDesc as *const _,
                 init_data,
-                ppTexture1D as *mut _ as _,
+                &mut tex.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(tex) } else { Err(hr) }
     }
     pub unsafe fn CreateTexture2D(
         &self,
         pDesc: &D3D11_TEXTURE2D_DESC,
         pInitialData: Option<&D3D11_SUBRESOURCE_DATA>,
-        ppTexture2D: &mut ID3D11Texture2D,
-    ) -> HRESULT {
+    ) -> Result<ID3D11Texture2D, HRESULT> {
+        let mut tex = ID3D11Texture2D(core::ptr::null_mut());
         let init_data = pInitialData.map_or(core::ptr::null(), |d| d as *const _);
-        unsafe {
+        let hr = unsafe {
             ((*(*self.0)).CreateTexture2D)(
                 self.0 as _,
                 pDesc as *const _,
                 init_data,
-                ppTexture2D as *mut _ as _,
+                &mut tex.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(tex) } else { Err(hr) }
     }
     pub unsafe fn CreateTexture3D(
         &self,
         pDesc: &D3D11_TEXTURE3D_DESC,
         pInitialData: Option<&D3D11_SUBRESOURCE_DATA>,
-        ppTexture3D: &mut ID3D11Texture3D,
-    ) -> HRESULT {
+    ) -> Result<ID3D11Texture3D, HRESULT> {
+        let mut tex = ID3D11Texture3D(core::ptr::null_mut());
         let init_data = pInitialData.map_or(core::ptr::null(), |d| d as *const _);
-        unsafe {
+        let hr = unsafe {
             ((*(*self.0)).CreateTexture3D)(
                 self.0 as _,
                 pDesc as *const _,
                 init_data,
-                ppTexture3D as *mut _ as _,
+                &mut tex.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(tex) } else { Err(hr) }
     }
     pub unsafe fn CreateShaderResourceView(
         &self,
         pResource: &ID3D11Resource,
         pDesc: Option<&D3D11_SHADER_RESOURCE_VIEW_DESC>,
-        ppSRView: &mut ID3D11ShaderResourceView,
-    ) -> HRESULT {
+    ) -> Result<ID3D11ShaderResourceView, HRESULT> {
+        let mut srv = ID3D11ShaderResourceView(core::ptr::null_mut());
         let desc = pDesc.map_or(core::ptr::null(), |d| d as *const _);
-        unsafe {
+        let hr = unsafe {
             ((*(*self.0)).CreateShaderResourceView)(
                 self.0 as _,
                 pResource.0 as _,
                 desc,
-                ppSRView as *mut _ as _,
+                &mut srv.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(srv) } else { Err(hr) }
     }
     pub unsafe fn CreateUnorderedAccessView(
         &self,
         pResource: &ID3D11Resource,
         pDesc: Option<&D3D11_UNORDERED_ACCESS_VIEW_DESC>,
-        ppUAView: &mut ID3D11UnorderedAccessView,
-    ) -> HRESULT {
+    ) -> Result<ID3D11UnorderedAccessView, HRESULT> {
+        let mut uav = ID3D11UnorderedAccessView(core::ptr::null_mut());
         let desc = pDesc.map_or(core::ptr::null(), |d| d as *const _);
-        unsafe {
+        let hr = unsafe {
             ((*(*self.0)).CreateUnorderedAccessView)(
                 self.0 as _,
                 pResource.0 as _,
                 desc,
-                ppUAView as *mut _ as _,
+                &mut uav.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(uav) } else { Err(hr) }
     }
     pub unsafe fn CreateRenderTargetView(
         &self,
         pResource: &ID3D11Resource,
         pDesc: Option<&D3D11_RENDER_TARGET_VIEW_DESC>,
-        ppRTView: &mut ID3D11RenderTargetView,
-    ) -> HRESULT {
+    ) -> Result<ID3D11RenderTargetView, HRESULT> {
+        let mut rtv = ID3D11RenderTargetView(core::ptr::null_mut());
         let desc = pDesc.map_or(core::ptr::null(), |d| d as *const _);
-        unsafe {
+        let hr = unsafe {
             ((*(*self.0)).CreateRenderTargetView)(
                 self.0 as _,
                 pResource.0 as _,
                 desc,
-                ppRTView as *mut _ as _,
+                &mut rtv.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(rtv) } else { Err(hr) }
     }
     pub unsafe fn CreateDepthStencilView(
         &self,
         pResource: &ID3D11Resource,
         pDesc: Option<&D3D11_DEPTH_STENCIL_VIEW_DESC>,
-        ppDepthStencilView: &mut ID3D11DepthStencilView,
-    ) -> HRESULT {
+    ) -> Result<ID3D11DepthStencilView, HRESULT> {
+        let mut dsv = ID3D11DepthStencilView(core::ptr::null_mut());
         let desc = pDesc.map_or(core::ptr::null(), |d| d as *const _);
-        unsafe {
+        let hr = unsafe {
             ((*(*self.0)).CreateDepthStencilView)(
                 self.0 as _,
                 pResource.0 as _,
                 desc,
-                ppDepthStencilView as *mut _ as _,
+                &mut dsv.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(dsv) } else { Err(hr) }
     }
     pub unsafe fn CreateInputLayout(
         &self,
         pInputElementDescs: &[D3D11_INPUT_ELEMENT_DESC],
         pShaderBytecodeWithInputSignature: &[u8],
-        ppInputLayout: &mut ID3D11InputLayout,
-    ) -> HRESULT {
-        unsafe {
+    ) -> Result<ID3D11InputLayout, HRESULT> {
+        let mut layout = ID3D11InputLayout(core::ptr::null_mut());
+        let hr = unsafe {
             ((*(*self.0)).CreateInputLayout)(
                 self.0 as _,
                 pInputElementDescs.as_ptr(),
                 pInputElementDescs.len() as u32,
                 pShaderBytecodeWithInputSignature.as_ptr() as _,
                 pShaderBytecodeWithInputSignature.len(),
-                ppInputLayout as *mut _ as _,
+                &mut layout.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(layout) } else { Err(hr) }
     }
     pub unsafe fn CreateVertexShader(
         &self,
         pShaderBytecode: &[u8],
-        pClassLinkage: Option<*mut c_void>,
-        ppVertexShader: &mut ID3D11VertexShader,
-    ) -> HRESULT {
-        let linkage = pClassLinkage.unwrap_or(core::ptr::null_mut());
-        unsafe {
+        pClassLinkage: Option<&IUnknown>,
+    ) -> Result<ID3D11VertexShader, HRESULT> {
+        let mut shader = ID3D11VertexShader(core::ptr::null_mut());
+        let linkage = pClassLinkage.map_or(core::ptr::null_mut(), |l| l.0 as _);
+        let hr = unsafe {
             ((*(*self.0)).CreateVertexShader)(
                 self.0 as _,
                 pShaderBytecode.as_ptr() as _,
                 pShaderBytecode.len(),
                 linkage,
-                ppVertexShader as *mut _ as _,
+                &mut shader.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(shader) } else { Err(hr) }
     }
     pub unsafe fn CreateGeometryShader(
         &self,
         pShaderBytecode: &[u8],
-        pClassLinkage: Option<*mut c_void>,
-        ppGeometryShader: &mut *mut c_void,
-    ) -> HRESULT {
-        let linkage = pClassLinkage.unwrap_or(core::ptr::null_mut());
-        unsafe {
+        pClassLinkage: Option<&IUnknown>,
+    ) -> Result<ID3D11GeometryShader, HRESULT> {
+        let mut shader = ID3D11GeometryShader(core::ptr::null_mut());
+        let linkage = pClassLinkage.map_or(core::ptr::null_mut(), |l| l.0 as _);
+        let hr = unsafe {
             ((*(*self.0)).CreateGeometryShader)(
                 self.0 as _,
                 pShaderBytecode.as_ptr() as _,
                 pShaderBytecode.len(),
                 linkage,
-                ppGeometryShader as *mut _,
+                &mut shader.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(shader) } else { Err(hr) }
+    }
+    pub unsafe fn CreateGeometryShaderWithStreamOutput(
+        &self,
+        pShaderBytecode: &[u8],
+        pSODeclaration: &[D3D11_SO_DECLARATION_ENTRY],
+        pBufferStrides: Option<&[u32]>,
+        RasterizedStream: u32,
+        pClassLinkage: Option<&IUnknown>,
+    ) -> Result<ID3D11GeometryShader, HRESULT> {
+        let mut shader = ID3D11GeometryShader(core::ptr::null_mut());
+        let linkage = pClassLinkage.map_or(core::ptr::null_mut(), |l| l.0 as _);
+        let (strides_ptr, strides_len) = match pBufferStrides {
+            Some(s) => (s.as_ptr(), s.len() as u32),
+            None => (core::ptr::null(), 0),
+        };
+        let hr = unsafe {
+            ((*(*self.0)).CreateGeometryShaderWithStreamOutput)(
+                self.0 as _,
+                pShaderBytecode.as_ptr() as _,
+                pShaderBytecode.len(),
+                pSODeclaration.as_ptr(),
+                pSODeclaration.len() as u32,
+                strides_ptr,
+                strides_len,
+                RasterizedStream,
+                linkage,
+                &mut shader.0 as *mut _ as _,
+            )
+        };
+        if hr >= 0 { Ok(shader) } else { Err(hr) }
     }
     pub unsafe fn CreatePixelShader(
         &self,
         pShaderBytecode: &[u8],
-        pClassLinkage: Option<*mut c_void>,
-        ppPixelShader: &mut ID3D11PixelShader,
-    ) -> HRESULT {
-        let linkage = pClassLinkage.unwrap_or(core::ptr::null_mut());
-        unsafe {
+        pClassLinkage: Option<&IUnknown>,
+    ) -> Result<ID3D11PixelShader, HRESULT> {
+        let mut shader = ID3D11PixelShader(core::ptr::null_mut());
+        let linkage = pClassLinkage.map_or(core::ptr::null_mut(), |l| l.0 as _);
+        let hr = unsafe {
             ((*(*self.0)).CreatePixelShader)(
                 self.0 as _,
                 pShaderBytecode.as_ptr() as _,
                 pShaderBytecode.len(),
                 linkage,
-                ppPixelShader as *mut _ as _,
+                &mut shader.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(shader) } else { Err(hr) }
     }
     pub unsafe fn CreateHullShader(
         &self,
         pShaderBytecode: &[u8],
-        pClassLinkage: Option<*mut c_void>,
-        ppHullShader: &mut *mut c_void,
-    ) -> HRESULT {
-        let linkage = pClassLinkage.unwrap_or(core::ptr::null_mut());
-        unsafe {
+        pClassLinkage: Option<&IUnknown>,
+    ) -> Result<ID3D11HullShader, HRESULT> {
+        let mut shader = ID3D11HullShader(core::ptr::null_mut());
+        let linkage = pClassLinkage.map_or(core::ptr::null_mut(), |l| l.0 as _);
+        let hr = unsafe {
             ((*(*self.0)).CreateHullShader)(
                 self.0 as _,
                 pShaderBytecode.as_ptr() as _,
                 pShaderBytecode.len(),
                 linkage,
-                ppHullShader as *mut _,
+                &mut shader.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(shader) } else { Err(hr) }
     }
     pub unsafe fn CreateDomainShader(
         &self,
         pShaderBytecode: &[u8],
-        pClassLinkage: Option<*mut c_void>,
-        ppDomainShader: &mut *mut c_void,
-    ) -> HRESULT {
-        let linkage = pClassLinkage.unwrap_or(core::ptr::null_mut());
-        unsafe {
+        pClassLinkage: Option<&IUnknown>,
+    ) -> Result<ID3D11DomainShader, HRESULT> {
+        let mut shader = ID3D11DomainShader(core::ptr::null_mut());
+        let linkage = pClassLinkage.map_or(core::ptr::null_mut(), |l| l.0 as _);
+        let hr = unsafe {
             ((*(*self.0)).CreateDomainShader)(
                 self.0 as _,
                 pShaderBytecode.as_ptr() as _,
                 pShaderBytecode.len(),
                 linkage,
-                ppDomainShader as *mut _,
+                &mut shader.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(shader) } else { Err(hr) }
     }
     pub unsafe fn CreateComputeShader(
         &self,
         pShaderBytecode: &[u8],
-        pClassLinkage: Option<*mut c_void>,
-        ppComputeShader: &mut ID3D11ComputeShader,
-    ) -> HRESULT {
-        let linkage = pClassLinkage.unwrap_or(core::ptr::null_mut());
-        unsafe {
+        pClassLinkage: Option<&IUnknown>,
+    ) -> Result<ID3D11ComputeShader, HRESULT> {
+        let mut shader = ID3D11ComputeShader(core::ptr::null_mut());
+        let linkage = pClassLinkage.map_or(core::ptr::null_mut(), |l| l.0 as _);
+        let hr = unsafe {
             ((*(*self.0)).CreateComputeShader)(
                 self.0 as _,
                 pShaderBytecode.as_ptr() as _,
                 pShaderBytecode.len(),
                 linkage,
-                ppComputeShader as *mut _ as _,
+                &mut shader.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(shader) } else { Err(hr) }
     }
     pub unsafe fn CreateBlendState(
         &self,
         pBlendStateDesc: &D3D11_BLEND_DESC,
-        ppBlendState: &mut ID3D11BlendState,
-    ) -> HRESULT {
-        unsafe {
+    ) -> Result<ID3D11BlendState, HRESULT> {
+        let mut state = ID3D11BlendState(core::ptr::null_mut());
+        let hr = unsafe {
             ((*(*self.0)).CreateBlendState)(
                 self.0 as _,
                 pBlendStateDesc as *const _,
-                ppBlendState as *mut _ as _,
+                &mut state.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(state) } else { Err(hr) }
     }
     pub unsafe fn CreateDepthStencilState(
         &self,
         pDepthStencilDesc: &D3D11_DEPTH_STENCIL_DESC,
-        ppDepthStencilState: &mut ID3D11DepthStencilState,
-    ) -> HRESULT {
-        unsafe {
+    ) -> Result<ID3D11DepthStencilState, HRESULT> {
+        let mut state = ID3D11DepthStencilState(core::ptr::null_mut());
+        let hr = unsafe {
             ((*(*self.0)).CreateDepthStencilState)(
                 self.0 as _,
                 pDepthStencilDesc as *const _,
-                ppDepthStencilState as *mut _ as _,
+                &mut state.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(state) } else { Err(hr) }
     }
     pub unsafe fn CreateRasterizerState(
         &self,
         pRasterizerDesc: &D3D11_RASTERIZER_DESC,
-        ppRasterizerState: &mut ID3D11RasterizerState,
-    ) -> HRESULT {
-        unsafe {
+    ) -> Result<ID3D11RasterizerState, HRESULT> {
+        let mut state = ID3D11RasterizerState(core::ptr::null_mut());
+        let hr = unsafe {
             ((*(*self.0)).CreateRasterizerState)(
                 self.0 as _,
                 pRasterizerDesc as *const _,
-                ppRasterizerState as *mut _ as _,
+                &mut state.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(state) } else { Err(hr) }
     }
     pub unsafe fn CreateSamplerState(
         &self,
         pSamplerDesc: &D3D11_SAMPLER_DESC,
-        ppSamplerState: &mut ID3D11SamplerState,
-    ) -> HRESULT {
-        unsafe {
+    ) -> Result<ID3D11SamplerState, HRESULT> {
+        let mut state = ID3D11SamplerState(core::ptr::null_mut());
+        let hr = unsafe {
             ((*(*self.0)).CreateSamplerState)(
                 self.0 as _,
                 pSamplerDesc as *const _,
-                ppSamplerState as *mut _ as _,
+                &mut state.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(state) } else { Err(hr) }
+    }
+    pub unsafe fn CreateQuery(
+        &self,
+        pQueryDesc: &D3D11_QUERY_DESC,
+    ) -> Result<ID3D11Query, HRESULT> {
+        let mut query = ID3D11Query(core::ptr::null_mut());
+        let hr = unsafe {
+            ((*(*self.0)).CreateQuery)(
+                self.0 as _,
+                pQueryDesc as *const _,
+                &mut query.0 as *mut _ as _,
+            )
+        };
+        if hr >= 0 { Ok(query) } else { Err(hr) }
+    }
+    pub unsafe fn CreatePredicate(
+        &self,
+        pPredicateDesc: &D3D11_QUERY_DESC,
+    ) -> Result<IUnknown, HRESULT> {
+        let mut pred = IUnknown(core::ptr::null_mut());
+        let hr = unsafe {
+            ((*(*self.0)).CreatePredicate)(
+                self.0 as _,
+                pPredicateDesc as *const _,
+                &mut pred.0 as *mut _ as _,
+            )
+        };
+        if hr >= 0 { Ok(pred) } else { Err(hr) }
+    }
+    pub unsafe fn CreateCounter(
+        &self,
+        pCounterDesc: &D3D11_COUNTER_DESC,
+    ) -> Result<IUnknown, HRESULT> {
+        let mut cnt = IUnknown(core::ptr::null_mut());
+        let hr = unsafe {
+            ((*(*self.0)).CreateCounter)(
+                self.0 as _,
+                pCounterDesc as *const _,
+                &mut cnt.0 as *mut _ as _,
+            )
+        };
+        if hr >= 0 { Ok(cnt) } else { Err(hr) }
     }
     pub unsafe fn CheckFormatSupport(
         &self,
         Format: DXGI_FORMAT,
-        pFormatSupport: &mut u32,
-    ) -> HRESULT {
-        unsafe { ((*(*self.0)).CheckFormatSupport)(self.0 as _, Format, pFormatSupport as *mut _) }
+    ) -> Result<u32, HRESULT> {
+        let mut support = 0u32;
+        let hr = unsafe { ((*(*self.0)).CheckFormatSupport)(self.0 as _, Format, &mut support) };
+        if hr >= 0 { Ok(support) } else { Err(hr) }
     }
     pub unsafe fn CheckMultisampleQualityLevels(
         &self,
         Format: DXGI_FORMAT,
         SampleCount: u32,
-        pNumQualityLevels: &mut u32,
-    ) -> HRESULT {
-        unsafe {
+    ) -> Result<u32, HRESULT> {
+        let mut levels = 0u32;
+        let hr = unsafe {
             ((*(*self.0)).CheckMultisampleQualityLevels)(
                 self.0 as _,
                 Format,
                 SampleCount,
-                pNumQualityLevels as *mut _,
+                &mut levels,
             )
-        }
+        };
+        if hr >= 0 { Ok(levels) } else { Err(hr) }
+    }
+    pub unsafe fn CheckCounterInfo(&self) -> D3D11_COUNTER_INFO {
+        let mut info = core::mem::MaybeUninit::uninit();
+        unsafe { ((*(*self.0)).CheckCounterInfo)(self.0 as _, info.as_mut_ptr()) };
+        unsafe { info.assume_init() }
+    }
+    pub unsafe fn CheckCounter(
+        &self,
+        pDesc: &D3D11_COUNTER_DESC,
+        szName: Option<&mut [u8]>,
+        szUnits: Option<&mut [u8]>,
+        szDescription: Option<&mut [u8]>,
+    ) -> Result<(D3D11_COUNTER_TYPE, u32), HRESULT> {
+        let mut c_type = D3D11_COUNTER_TYPE::FLOAT32;
+        let mut active = 0u32;
+        let (n_ptr, mut n_len) = match szName {
+            Some(s) => (s.as_mut_ptr(), s.len() as u32),
+            None => (core::ptr::null_mut(), 0),
+        };
+        let (u_ptr, mut u_len) = match szUnits {
+            Some(s) => (s.as_mut_ptr(), s.len() as u32),
+            None => (core::ptr::null_mut(), 0),
+        };
+        let (d_ptr, mut d_len) = match szDescription {
+            Some(s) => (s.as_mut_ptr(), s.len() as u32),
+            None => (core::ptr::null_mut(), 0),
+        };
+        let hr = unsafe {
+            ((*(*self.0)).CheckCounter)(
+                self.0 as _,
+                pDesc as *const _,
+                &mut c_type,
+                &mut active,
+                n_ptr,
+                &mut n_len,
+                u_ptr,
+                &mut u_len,
+                d_ptr,
+                &mut d_len,
+            )
+        };
+        if hr >= 0 { Ok((c_type, active)) } else { Err(hr) }
     }
     pub unsafe fn CheckFeatureSupport(
         &self,
-        Feature: u32,
-        pFeatureSupportData: *mut c_void,
-        FeatureSupportDataSize: u32,
-    ) -> HRESULT {
-        unsafe {
+        Feature: D3D11_FEATURE,
+        pFeatureSupportData: &mut [u8],
+    ) -> Result<(), HRESULT> {
+        let hr = unsafe {
             ((*(*self.0)).CheckFeatureSupport)(
                 self.0 as _,
                 Feature,
-                pFeatureSupportData,
-                FeatureSupportDataSize,
+                pFeatureSupportData.as_mut_ptr() as _,
+                pFeatureSupportData.len() as u32,
             )
-        }
+        };
+        if hr >= 0 { Ok(()) } else { Err(hr) }
+    }
+    pub unsafe fn GetPrivateData(
+        &self,
+        guid: &GUID,
+        data: Option<&mut [u8]>,
+    ) -> Result<u32, HRESULT> {
+        let (ptr, mut size) = match data {
+            Some(buf) => (buf.as_mut_ptr() as *mut c_void, buf.len() as u32),
+            None => (core::ptr::null_mut(), 0),
+        };
+        let hr = unsafe {
+            ((*(*self.0)).GetPrivateData)(self.0 as _, guid as *const _, &mut size, ptr)
+        };
+        if hr >= 0 { Ok(size) } else { Err(hr) }
+    }
+    pub unsafe fn SetPrivateData(&self, guid: &GUID, pData: &[u8]) -> Result<(), HRESULT> {
+        let hr = unsafe {
+            ((*(*self.0)).SetPrivateData)(
+                self.0 as _,
+                guid as *const _,
+                pData.len() as u32,
+                pData.as_ptr() as _,
+            )
+        };
+        if hr >= 0 { Ok(()) } else { Err(hr) }
+    }
+    pub unsafe fn SetPrivateDataInterface(
+        &self,
+        guid: &GUID,
+        pData: Option<&IUnknown>,
+    ) -> Result<(), HRESULT> {
+        let unk = pData.map_or(core::ptr::null(), |u| u as *const _);
+        let hr = unsafe { ((*(*self.0)).SetPrivateDataInterface)(self.0 as _, guid as *const _, unk) };
+        if hr >= 0 { Ok(()) } else { Err(hr) }
     }
     pub unsafe fn GetFeatureLevel(&self) -> D3D_FEATURE_LEVEL {
         unsafe { ((*(*self.0)).GetFeatureLevel)(self.0 as _) }
@@ -3394,10 +3783,17 @@ impl ID3D11Device {
     pub unsafe fn GetDeviceRemovedReason(&self) -> HRESULT {
         unsafe { ((*(*self.0)).GetDeviceRemovedReason)(self.0 as _) }
     }
-    pub unsafe fn GetImmediateContext(&self, ppImmediateContext: &mut ID3D11DeviceContext) {
-        unsafe {
-            ((*(*self.0)).GetImmediateContext)(self.0 as _, ppImmediateContext as *mut _ as _)
-        }
+    pub unsafe fn GetImmediateContext(&self) -> ID3D11DeviceContext {
+        let mut ctx = ID3D11DeviceContext(core::ptr::null_mut());
+        unsafe { ((*(*self.0)).GetImmediateContext)(self.0 as _, &mut ctx.0 as *mut _ as _) };
+        ctx
+    }
+    pub unsafe fn SetExceptionMode(&self, RaiseFlags: u32) -> Result<(), HRESULT> {
+        let hr = unsafe { ((*(*self.0)).SetExceptionMode)(self.0 as _, RaiseFlags) };
+        if hr >= 0 { Ok(()) } else { Err(hr) }
+    }
+    pub unsafe fn GetExceptionMode(&self) -> u32 {
+        unsafe { ((*(*self.0)).GetExceptionMode)(self.0 as _) }
     }
 }
 
@@ -3437,75 +3833,80 @@ pub mod ffi {
 }
 
 pub unsafe fn D3D11CreateDevice(
-    pAdapter: Option<*mut c_void>,
+    pAdapter: Option<&IDXGIAdapter>,
     DriverType: D3D_DRIVER_TYPE,
-    Software: Option<*mut c_void>,
+    Software: HMODULE,
     Flags: u32,
     pFeatureLevels: Option<&[D3D_FEATURE_LEVEL]>,
     SDKVersion: u32,
-    ppDevice: Option<&mut ID3D11Device>,
-    pFeatureLevel: Option<&mut D3D_FEATURE_LEVEL>,
-    ppImmediateContext: Option<&mut ID3D11DeviceContext>,
-) -> HRESULT {
+) -> Result<(ID3D11Device, D3D_FEATURE_LEVEL, ID3D11DeviceContext), HRESULT> {
+    let mut device = ID3D11Device(core::ptr::null_mut());
+    let mut feature_level = D3D_FEATURE_LEVEL::_11_0;
+    let mut context = ID3D11DeviceContext(core::ptr::null_mut());
     let (fl_ptr, fl_len) = match pFeatureLevels {
         Some(slice) => (slice.as_ptr(), slice.len() as u32),
         None => (core::ptr::null(), 0),
     };
-    let dev_ptr = ppDevice.map_or(core::ptr::null_mut(), |d| d as *mut _ as _);
-    let fl_out_ptr = pFeatureLevel.map_or(core::ptr::null_mut(), |f| f as *mut _);
-    let ctx_ptr = ppImmediateContext.map_or(core::ptr::null_mut(), |c| c as *mut _ as _);
-    unsafe {
+    let adapter_ptr = pAdapter.map_or(core::ptr::null_mut(), |a| a.0 as _);
+    let hr = unsafe {
         ffi::D3D11CreateDevice(
-            pAdapter.unwrap_or(core::ptr::null_mut()),
+            adapter_ptr,
             DriverType,
-            Software.unwrap_or(core::ptr::null_mut()),
+            Software,
             Flags,
             fl_ptr,
             fl_len,
             SDKVersion,
-            dev_ptr,
-            fl_out_ptr,
-            ctx_ptr,
+            &mut device.0 as *mut _ as _,
+            &mut feature_level as *mut _,
+            &mut context.0 as *mut _ as _,
         )
+    };
+    if hr >= 0 {
+        Ok((device, feature_level, context))
+    } else {
+        Err(hr)
     }
 }
 
 pub unsafe fn D3D11CreateDeviceAndSwapChain(
-    pAdapter: Option<*mut c_void>,
+    pAdapter: Option<&IDXGIAdapter>,
     DriverType: D3D_DRIVER_TYPE,
-    Software: Option<*mut c_void>,
+    Software: HMODULE,
     Flags: u32,
     pFeatureLevels: Option<&[D3D_FEATURE_LEVEL]>,
     SDKVersion: u32,
     pSwapChainDesc: Option<&DXGI_SWAP_CHAIN_DESC>,
-    ppSwapChain: Option<&mut IDXGISwapChain>,
-    ppDevice: Option<&mut ID3D11Device>,
-    pFeatureLevel: Option<&mut D3D_FEATURE_LEVEL>,
-    ppImmediateContext: Option<&mut ID3D11DeviceContext>,
-) -> HRESULT {
+) -> Result<(IDXGISwapChain, ID3D11Device, D3D_FEATURE_LEVEL, ID3D11DeviceContext), HRESULT> {
+    let mut swap_chain = IDXGISwapChain(core::ptr::null_mut());
+    let mut device = ID3D11Device(core::ptr::null_mut());
+    let mut feature_level = D3D_FEATURE_LEVEL::_11_0;
+    let mut context = ID3D11DeviceContext(core::ptr::null_mut());
     let (fl_ptr, fl_len) = match pFeatureLevels {
         Some(slice) => (slice.as_ptr(), slice.len() as u32),
         None => (core::ptr::null(), 0),
     };
+    let adapter_ptr = pAdapter.map_or(core::ptr::null_mut(), |a| a.0 as _);
     let sc_desc_ptr = pSwapChainDesc.map_or(core::ptr::null(), |s| s as *const _);
-    let sc_ptr = ppSwapChain.map_or(core::ptr::null_mut(), |s| s as *mut _ as _);
-    let dev_ptr = ppDevice.map_or(core::ptr::null_mut(), |d| d as *mut _ as _);
-    let fl_out_ptr = pFeatureLevel.map_or(core::ptr::null_mut(), |f| f as *mut _);
-    let ctx_ptr = ppImmediateContext.map_or(core::ptr::null_mut(), |c| c as *mut _ as _);
-    unsafe {
+    let hr = unsafe {
         ffi::D3D11CreateDeviceAndSwapChain(
-            pAdapter.unwrap_or(core::ptr::null_mut()),
+            adapter_ptr,
             DriverType,
-            Software.unwrap_or(core::ptr::null_mut()),
+            Software,
             Flags,
             fl_ptr,
             fl_len,
             SDKVersion,
             sc_desc_ptr,
-            sc_ptr,
-            dev_ptr,
-            fl_out_ptr,
-            ctx_ptr,
+            &mut swap_chain.0 as *mut _ as _,
+            &mut device.0 as *mut _ as _,
+            &mut feature_level as *mut _,
+            &mut context.0 as *mut _ as _,
         )
+    };
+    if hr >= 0 {
+        Ok((swap_chain, device, feature_level, context))
+    } else {
+        Err(hr)
     }
 }

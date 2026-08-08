@@ -1,4 +1,4 @@
-use crate::types::{BOOL, GUID, HMODULE, HRESULT, HWND, IUnknown, IUnknownVtbl, LUID, RECT};
+use crate::types::{BOOL, GUID, HANDLE, HMODULE, HRESULT, HWND, IUnknown, IUnknownVtbl, LUID, RECT};
 use core::ffi::c_void;
 
 pub const IID_IDXGIOBJECT: GUID = GUID::from_u128(0xaec22413_be25_465f_9f45_cc5627265801);
@@ -254,6 +254,13 @@ pub struct DXGI_SURFACE_DESC {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DXGI_MAPPED_RECT {
+    pub Pitch: i32,
+    pub pBits: *mut u8,
+}
+
+#[repr(C)]
 pub struct IDXGIObjectVtbl {
     pub base: IUnknownVtbl,
     pub SetPrivateData: unsafe extern "system" fn(
@@ -285,8 +292,8 @@ pub struct IDXGIObjectVtbl {
 pub struct IDXGIObject(pub *mut *const IDXGIObjectVtbl);
 
 impl IDXGIObject {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -294,36 +301,48 @@ impl IDXGIObject {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn SetPrivateData(&self, Name: &GUID, pData: &[u8]) -> HRESULT {
-        unsafe {
+    pub unsafe fn SetPrivateData(&self, Name: &GUID, pData: &[u8]) -> Result<(), HRESULT> {
+        let hr = unsafe {
             ((*(*self.0)).SetPrivateData)(
                 self.0 as _,
                 Name as *const _,
                 pData.len() as u32,
                 pData.as_ptr() as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(()) } else { Err(hr) }
     }
     pub unsafe fn SetPrivateDataInterface(
         &self,
         Name: &GUID,
         pUnknown: Option<&IUnknown>,
-    ) -> HRESULT {
+    ) -> Result<(), HRESULT> {
         let unk = pUnknown.map_or(core::ptr::null(), |u| u as *const _);
-        unsafe { ((*(*self.0)).SetPrivateDataInterface)(self.0 as _, Name as *const _, unk) }
+        let hr = unsafe { ((*(*self.0)).SetPrivateDataInterface)(self.0 as _, Name as *const _, unk) };
+        if hr >= 0 { Ok(()) } else { Err(hr) }
     }
     pub unsafe fn GetPrivateData(
         &self,
         Name: &GUID,
-        pDataSize: &mut u32,
-        pData: *mut c_void,
-    ) -> HRESULT {
-        unsafe {
-            ((*(*self.0)).GetPrivateData)(self.0 as _, Name as *const _, pDataSize as *mut _, pData)
-        }
+        pData: Option<&mut [u8]>,
+    ) -> Result<u32, HRESULT> {
+        let (ptr, mut size) = match pData {
+            Some(buf) => (buf.as_mut_ptr() as *mut c_void, buf.len() as u32),
+            None => (core::ptr::null_mut(), 0),
+        };
+        let hr = unsafe {
+            ((*(*self.0)).GetPrivateData)(self.0 as _, Name as *const _, &mut size, ptr)
+        };
+        if hr >= 0 { Ok(size) } else { Err(hr) }
     }
-    pub unsafe fn GetParent(&self, riid: &GUID, ppParent: &mut *mut c_void) -> HRESULT {
-        unsafe { ((*(*self.0)).GetParent)(self.0 as _, riid as *const _, ppParent as *mut _ as _) }
+    pub unsafe fn GetParent<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        let mut parent = core::ptr::null_mut();
+        let hr = unsafe { ((*(*self.0)).GetParent)(self.0 as _, riid as *const _, &mut parent) };
+        if hr >= 0 {
+            Ok(unsafe { core::mem::transmute_copy(&parent) })
+        } else {
+            Err(hr)
+        }
     }
 }
 
@@ -342,8 +361,8 @@ pub struct IDXGIDeviceSubObjectVtbl {
 pub struct IDXGIDeviceSubObject(pub *mut *const IDXGIDeviceSubObjectVtbl);
 
 impl IDXGIDeviceSubObject {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -351,8 +370,14 @@ impl IDXGIDeviceSubObject {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetDevice(&self, riid: &GUID, ppDevice: &mut *mut c_void) -> HRESULT {
-        unsafe { ((*(*self.0)).GetDevice)(self.0 as _, riid as *const _, ppDevice as *mut _ as _) }
+    pub unsafe fn GetDevice<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        let mut dev = core::ptr::null_mut();
+        let hr = unsafe { ((*(*self.0)).GetDevice)(self.0 as _, riid as *const _, &mut dev) };
+        if hr >= 0 {
+            Ok(unsafe { core::mem::transmute_copy(&dev) })
+        } else {
+            Err(hr)
+        }
     }
 }
 
@@ -373,8 +398,8 @@ pub struct IDXGIResourceVtbl {
 pub struct IDXGIResource(pub *mut *const IDXGIResourceVtbl);
 
 impl IDXGIResource {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -382,17 +407,24 @@ impl IDXGIResource {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetSharedHandle(&self, pSharedHandle: &mut *mut c_void) -> HRESULT {
-        unsafe { ((*(*self.0)).GetSharedHandle)(self.0 as _, pSharedHandle as *mut _ as _) }
+    pub unsafe fn GetSharedHandle(&self) -> Result<HANDLE, HRESULT> {
+        let mut handle = core::ptr::null_mut();
+        let hr = unsafe { ((*(*self.0)).GetSharedHandle)(self.0 as _, &mut handle) };
+        if hr >= 0 { Ok(handle) } else { Err(hr) }
     }
-    pub unsafe fn GetUsage(&self, pUsage: &mut u32) -> HRESULT {
-        unsafe { ((*(*self.0)).GetUsage)(self.0 as _, pUsage as *mut _) }
+    pub unsafe fn GetUsage(&self) -> Result<u32, HRESULT> {
+        let mut usage = 0u32;
+        let hr = unsafe { ((*(*self.0)).GetUsage)(self.0 as _, &mut usage) };
+        if hr >= 0 { Ok(usage) } else { Err(hr) }
     }
-    pub unsafe fn SetEvictionPriority(&self, EvictionPriority: u32) -> HRESULT {
-        unsafe { ((*(*self.0)).SetEvictionPriority)(self.0 as _, EvictionPriority) }
+    pub unsafe fn SetEvictionPriority(&self, EvictionPriority: u32) -> Result<(), HRESULT> {
+        let hr = unsafe { ((*(*self.0)).SetEvictionPriority)(self.0 as _, EvictionPriority) };
+        if hr >= 0 { Ok(()) } else { Err(hr) }
     }
-    pub unsafe fn GetEvictionPriority(&self, pEvictionPriority: &mut u32) -> HRESULT {
-        unsafe { ((*(*self.0)).GetEvictionPriority)(self.0 as _, pEvictionPriority as *mut _) }
+    pub unsafe fn GetEvictionPriority(&self) -> Result<u32, HRESULT> {
+        let mut priority = 0u32;
+        let hr = unsafe { ((*(*self.0)).GetEvictionPriority)(self.0 as _, &mut priority) };
+        if hr >= 0 { Ok(priority) } else { Err(hr) }
     }
 }
 
@@ -403,7 +435,7 @@ pub struct IDXGISurfaceVtbl {
         unsafe extern "system" fn(this: *mut c_void, pDesc: *mut DXGI_SURFACE_DESC) -> HRESULT,
     pub Map: unsafe extern "system" fn(
         this: *mut c_void,
-        pLockedRect: *mut c_void,
+        pLockedRect: *mut DXGI_MAPPED_RECT,
         MapFlags: u32,
     ) -> HRESULT,
     pub Unmap: unsafe extern "system" fn(this: *mut c_void) -> HRESULT,
@@ -414,8 +446,8 @@ pub struct IDXGISurfaceVtbl {
 pub struct IDXGISurface(pub *mut *const IDXGISurfaceVtbl);
 
 impl IDXGISurface {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -423,14 +455,19 @@ impl IDXGISurface {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetDesc(&self, pDesc: &mut DXGI_SURFACE_DESC) -> HRESULT {
-        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, pDesc as *mut _) }
+    pub unsafe fn GetDesc(&self) -> Result<DXGI_SURFACE_DESC, HRESULT> {
+        let mut desc = core::mem::MaybeUninit::uninit();
+        let hr = unsafe { ((*(*self.0)).GetDesc)(self.0 as _, desc.as_mut_ptr()) };
+        if hr >= 0 { Ok(unsafe { desc.assume_init() }) } else { Err(hr) }
     }
-    pub unsafe fn Map(&self, pLockedRect: *mut c_void, MapFlags: u32) -> HRESULT {
-        unsafe { ((*(*self.0)).Map)(self.0 as _, pLockedRect, MapFlags) }
+    pub unsafe fn Map(&self, MapFlags: u32) -> Result<DXGI_MAPPED_RECT, HRESULT> {
+        let mut rect = core::mem::MaybeUninit::uninit();
+        let hr = unsafe { ((*(*self.0)).Map)(self.0 as _, rect.as_mut_ptr() as _, MapFlags) };
+        if hr >= 0 { Ok(unsafe { rect.assume_init() }) } else { Err(hr) }
     }
-    pub unsafe fn Unmap(&self) -> HRESULT {
-        unsafe { ((*(*self.0)).Unmap)(self.0 as _) }
+    pub unsafe fn Unmap(&self) -> Result<(), HRESULT> {
+        let hr = unsafe { ((*(*self.0)).Unmap)(self.0 as _) };
+        if hr >= 0 { Ok(()) } else { Err(hr) }
     }
 }
 
@@ -456,8 +493,8 @@ pub struct IDXGIAdapterVtbl {
 pub struct IDXGIAdapter(pub *mut *const IDXGIAdapterVtbl);
 
 impl IDXGIAdapter {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -465,24 +502,22 @@ impl IDXGIAdapter {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn EnumOutputs(&self, Output: u32, ppOutput: &mut IDXGIOutput) -> HRESULT {
-        unsafe { ((*(*self.0)).EnumOutputs)(self.0 as _, Output, ppOutput as *mut _ as _) }
+    pub unsafe fn EnumOutputs(&self, Output: u32) -> Result<IDXGIOutput, HRESULT> {
+        let mut out = IDXGIOutput(core::ptr::null_mut());
+        let hr = unsafe { ((*(*self.0)).EnumOutputs)(self.0 as _, Output, &mut out.0 as *mut _ as _) };
+        if hr >= 0 { Ok(out) } else { Err(hr) }
     }
-    pub unsafe fn GetDesc(&self, pDesc: &mut DXGI_ADAPTER_DESC) -> HRESULT {
-        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, pDesc as *mut _) }
+    pub unsafe fn GetDesc(&self) -> Result<DXGI_ADAPTER_DESC, HRESULT> {
+        let mut desc = core::mem::MaybeUninit::uninit();
+        let hr = unsafe { ((*(*self.0)).GetDesc)(self.0 as _, desc.as_mut_ptr()) };
+        if hr >= 0 { Ok(unsafe { desc.assume_init() }) } else { Err(hr) }
     }
-    pub unsafe fn CheckInterfaceSupport(
-        &self,
-        InterfaceName: &GUID,
-        pUMDVersion: &mut i64,
-    ) -> HRESULT {
-        unsafe {
-            ((*(*self.0)).CheckInterfaceSupport)(
-                self.0 as _,
-                InterfaceName as *const _,
-                pUMDVersion as *mut _,
-            )
-        }
+    pub unsafe fn CheckInterfaceSupport(&self, InterfaceName: &GUID) -> Result<i64, HRESULT> {
+        let mut ver = 0i64;
+        let hr = unsafe {
+            ((*(*self.0)).CheckInterfaceSupport)(self.0 as _, InterfaceName as *const _, &mut ver)
+        };
+        if hr >= 0 { Ok(ver) } else { Err(hr) }
     }
 }
 
@@ -498,8 +533,8 @@ pub struct IDXGIAdapter1Vtbl {
 pub struct IDXGIAdapter1(pub *mut *const IDXGIAdapter1Vtbl);
 
 impl IDXGIAdapter1 {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -507,8 +542,10 @@ impl IDXGIAdapter1 {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetDesc1(&self, pDesc: &mut DXGI_ADAPTER_DESC1) -> HRESULT {
-        unsafe { ((*(*self.0)).GetDesc1)(self.0 as _, pDesc as *mut _) }
+    pub unsafe fn GetDesc1(&self) -> Result<DXGI_ADAPTER_DESC1, HRESULT> {
+        let mut desc = core::mem::MaybeUninit::uninit();
+        let hr = unsafe { ((*(*self.0)).GetDesc1)(self.0 as _, desc.as_mut_ptr()) };
+        if hr >= 0 { Ok(unsafe { desc.assume_init() }) } else { Err(hr) }
     }
 }
 
@@ -558,8 +595,8 @@ pub struct IDXGIOutputVtbl {
 pub struct IDXGIOutput(pub *mut *const IDXGIOutputVtbl);
 
 impl IDXGIOutput {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -567,57 +604,67 @@ impl IDXGIOutput {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn GetDesc(&self, pDesc: &mut DXGI_OUTPUT_DESC) -> HRESULT {
-        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, pDesc as *mut _) }
+    pub unsafe fn GetDesc(&self) -> Result<DXGI_OUTPUT_DESC, HRESULT> {
+        let mut desc = core::mem::MaybeUninit::uninit();
+        let hr = unsafe { ((*(*self.0)).GetDesc)(self.0 as _, desc.as_mut_ptr()) };
+        if hr >= 0 { Ok(unsafe { desc.assume_init() }) } else { Err(hr) }
     }
     pub unsafe fn GetDisplayModeList(
         &self,
         EnumFormat: DXGI_FORMAT,
         Flags: u32,
-        pNumModes: &mut u32,
         pDesc: Option<&mut [DXGI_MODE_DESC]>,
-    ) -> HRESULT {
-        let desc_ptr = pDesc.map_or(core::ptr::null_mut(), |s| s.as_mut_ptr());
-        unsafe {
+    ) -> Result<u32, HRESULT> {
+        let (desc_ptr, mut count) = match pDesc {
+            Some(s) => (s.as_mut_ptr(), s.len() as u32),
+            None => (core::ptr::null_mut(), 0),
+        };
+        let hr = unsafe {
             ((*(*self.0)).GetDisplayModeList)(
                 self.0 as _,
                 EnumFormat,
                 Flags,
-                pNumModes as *mut _,
+                &mut count,
                 desc_ptr,
             )
-        }
+        };
+        if hr >= 0 { Ok(count) } else { Err(hr) }
     }
     pub unsafe fn FindClosestMatchingMode(
         &self,
         pModeToMatch: &DXGI_MODE_DESC,
-        pClosestMatch: &mut DXGI_MODE_DESC,
         pConcernedDevice: Option<&IUnknown>,
-    ) -> HRESULT {
+    ) -> Result<DXGI_MODE_DESC, HRESULT> {
         let dev = pConcernedDevice.map_or(core::ptr::null(), |d| d as *const _);
-        unsafe {
+        let mut match_mode = core::mem::MaybeUninit::uninit();
+        let hr = unsafe {
             ((*(*self.0)).FindClosestMatchingMode)(
                 self.0 as _,
                 pModeToMatch as *const _,
-                pClosestMatch as *mut _,
+                match_mode.as_mut_ptr(),
                 dev,
             )
-        }
+        };
+        if hr >= 0 { Ok(unsafe { match_mode.assume_init() }) } else { Err(hr) }
     }
-    pub unsafe fn WaitForVBlank(&self) -> HRESULT {
-        unsafe { ((*(*self.0)).WaitForVBlank)(self.0 as _) }
+    pub unsafe fn WaitForVBlank(&self) -> Result<(), HRESULT> {
+        let hr = unsafe { ((*(*self.0)).WaitForVBlank)(self.0 as _) };
+        if hr >= 0 { Ok(()) } else { Err(hr) }
     }
-    pub unsafe fn TakeOwnership(&self, pDevice: &IUnknown, Exclusive: BOOL) -> HRESULT {
-        unsafe { ((*(*self.0)).TakeOwnership)(self.0 as _, pDevice as *const _, Exclusive) }
+    pub unsafe fn TakeOwnership(&self, pDevice: &IUnknown, Exclusive: BOOL) -> Result<(), HRESULT> {
+        let hr = unsafe { ((*(*self.0)).TakeOwnership)(self.0 as _, pDevice as *const _, Exclusive) };
+        if hr >= 0 { Ok(()) } else { Err(hr) }
     }
     pub unsafe fn ReleaseOwnership(&self) {
         unsafe { ((*(*self.0)).ReleaseOwnership)(self.0 as _) }
     }
-    pub unsafe fn SetDisplaySurface(&self, pScanoutSurface: &IDXGISurface) -> HRESULT {
-        unsafe { ((*(*self.0)).SetDisplaySurface)(self.0 as _, pScanoutSurface as *const _) }
+    pub unsafe fn SetDisplaySurface(&self, pScanoutSurface: &IDXGISurface) -> Result<(), HRESULT> {
+        let hr = unsafe { ((*(*self.0)).SetDisplaySurface)(self.0 as _, pScanoutSurface as *const _) };
+        if hr >= 0 { Ok(()) } else { Err(hr) }
     }
-    pub unsafe fn GetDisplaySurfaceData(&self, pDestination: &IDXGISurface) -> HRESULT {
-        unsafe { ((*(*self.0)).GetDisplaySurfaceData)(self.0 as _, pDestination as *const _) }
+    pub unsafe fn GetDisplaySurfaceData(&self, pDestination: &IDXGISurface) -> Result<(), HRESULT> {
+        let hr = unsafe { ((*(*self.0)).GetDisplaySurfaceData)(self.0 as _, pDestination as *const _) };
+        if hr >= 0 { Ok(()) } else { Err(hr) }
     }
 }
 
@@ -669,8 +716,8 @@ pub struct IDXGISwapChainVtbl {
 pub struct IDXGISwapChain(pub *mut *const IDXGISwapChainVtbl);
 
 impl IDXGISwapChain {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -678,26 +725,30 @@ impl IDXGISwapChain {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn Present(&self, SyncInterval: u32, Flags: u32) -> HRESULT {
-        unsafe { ((*(*self.0)).Present)(self.0 as _, SyncInterval, Flags) }
+    pub unsafe fn Present(&self, SyncInterval: u32, Flags: u32) -> Result<(), HRESULT> {
+        let hr = unsafe { ((*(*self.0)).Present)(self.0 as _, SyncInterval, Flags) };
+        if hr >= 0 { Ok(()) } else { Err(hr) }
     }
-    pub unsafe fn GetBuffer(
-        &self,
-        Buffer: u32,
-        riid: &GUID,
-        ppSurface: &mut *mut c_void,
-    ) -> HRESULT {
-        unsafe {
+    pub unsafe fn GetBuffer<T>(&self, Buffer: u32, riid: &GUID) -> Result<T, HRESULT> {
+        let mut surface = core::ptr::null_mut();
+        let hr = unsafe {
             ((*(*self.0)).GetBuffer)(
                 self.0 as _,
                 Buffer,
                 riid as *const _,
-                ppSurface as *mut _ as _,
+                &mut surface,
             )
+        };
+        if hr >= 0 {
+            Ok(unsafe { core::mem::transmute_copy(&surface) })
+        } else {
+            Err(hr)
         }
     }
-    pub unsafe fn GetDesc(&self, pDesc: &mut DXGI_SWAP_CHAIN_DESC) -> HRESULT {
-        unsafe { ((*(*self.0)).GetDesc)(self.0 as _, pDesc as *mut _) }
+    pub unsafe fn GetDesc(&self) -> Result<DXGI_SWAP_CHAIN_DESC, HRESULT> {
+        let mut desc = core::mem::MaybeUninit::uninit();
+        let hr = unsafe { ((*(*self.0)).GetDesc)(self.0 as _, desc.as_mut_ptr()) };
+        if hr >= 0 { Ok(unsafe { desc.assume_init() }) } else { Err(hr) }
     }
     pub unsafe fn ResizeBuffers(
         &self,
@@ -706,8 +757,8 @@ impl IDXGISwapChain {
         Height: u32,
         NewFormat: DXGI_FORMAT,
         SwapChainFlags: u32,
-    ) -> HRESULT {
-        unsafe {
+    ) -> Result<(), HRESULT> {
+        let hr = unsafe {
             ((*(*self.0)).ResizeBuffers)(
                 self.0 as _,
                 BufferCount,
@@ -716,32 +767,44 @@ impl IDXGISwapChain {
                 NewFormat,
                 SwapChainFlags,
             )
-        }
+        };
+        if hr >= 0 { Ok(()) } else { Err(hr) }
     }
     pub unsafe fn SetFullscreenState(
         &self,
         Fullscreen: BOOL,
         pTarget: Option<&IDXGIOutput>,
-    ) -> HRESULT {
-        let target = pTarget.map_or(core::ptr::null_mut(), |t| t as *const _ as *mut _);
-        unsafe { ((*(*self.0)).SetFullscreenState)(self.0 as _, Fullscreen, target) }
+    ) -> Result<(), HRESULT> {
+        let target = pTarget.map_or(core::ptr::null_mut(), |t| t.0 as _);
+        let hr = unsafe { ((*(*self.0)).SetFullscreenState)(self.0 as _, Fullscreen, target) };
+        if hr >= 0 { Ok(()) } else { Err(hr) }
     }
-    pub unsafe fn GetFullscreenState(
-        &self,
-        pFullscreen: &mut BOOL,
-        ppTarget: Option<&mut IDXGIOutput>,
-    ) -> HRESULT {
-        let target = ppTarget.map_or(core::ptr::null_mut(), |t| t as *mut _ as _);
-        unsafe { ((*(*self.0)).GetFullscreenState)(self.0 as _, pFullscreen as *mut _, target) }
+    pub unsafe fn GetFullscreenState(&self) -> Result<(BOOL, Option<IDXGIOutput>), HRESULT> {
+        let mut fs = 0;
+        let mut target = IDXGIOutput(core::ptr::null_mut());
+        let hr = unsafe {
+            ((*(*self.0)).GetFullscreenState)(self.0 as _, &mut fs, &mut target.0 as *mut _ as _)
+        };
+        if hr >= 0 {
+            let t_opt = if !target.0.is_null() { Some(target) } else { None };
+            Ok((fs, t_opt))
+        } else {
+            Err(hr)
+        }
     }
-    pub unsafe fn ResizeTarget(&self, pNewTargetParameters: &DXGI_MODE_DESC) -> HRESULT {
-        unsafe { ((*(*self.0)).ResizeTarget)(self.0 as _, pNewTargetParameters as *const _) }
+    pub unsafe fn ResizeTarget(&self, pNewTargetParameters: &DXGI_MODE_DESC) -> Result<(), HRESULT> {
+        let hr = unsafe { ((*(*self.0)).ResizeTarget)(self.0 as _, pNewTargetParameters as *const _) };
+        if hr >= 0 { Ok(()) } else { Err(hr) }
     }
-    pub unsafe fn GetContainingOutput(&self, ppOutput: &mut IDXGIOutput) -> HRESULT {
-        unsafe { ((*(*self.0)).GetContainingOutput)(self.0 as _, ppOutput as *mut _ as _) }
+    pub unsafe fn GetContainingOutput(&self) -> Result<IDXGIOutput, HRESULT> {
+        let mut output = IDXGIOutput(core::ptr::null_mut());
+        let hr = unsafe { ((*(*self.0)).GetContainingOutput)(self.0 as _, &mut output.0 as *mut _ as _) };
+        if hr >= 0 { Ok(output) } else { Err(hr) }
     }
-    pub unsafe fn GetLastPresentCount(&self, pLastPresentCount: &mut u32) -> HRESULT {
-        unsafe { ((*(*self.0)).GetLastPresentCount)(self.0 as _, pLastPresentCount as *mut _) }
+    pub unsafe fn GetLastPresentCount(&self) -> Result<u32, HRESULT> {
+        let mut count = 0u32;
+        let hr = unsafe { ((*(*self.0)).GetLastPresentCount)(self.0 as _, &mut count) };
+        if hr >= 0 { Ok(count) } else { Err(hr) }
     }
 }
 
@@ -775,8 +838,8 @@ pub struct IDXGIFactoryVtbl {
 pub struct IDXGIFactory(pub *mut *const IDXGIFactoryVtbl);
 
 impl IDXGIFactory {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -784,38 +847,40 @@ impl IDXGIFactory {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn EnumAdapters(&self, Adapter: u32, ppAdapter: &mut IDXGIAdapter) -> HRESULT {
-        unsafe { ((*(*self.0)).EnumAdapters)(self.0 as _, Adapter, ppAdapter as *mut _ as _) }
+    pub unsafe fn EnumAdapters(&self, Adapter: u32) -> Result<IDXGIAdapter, HRESULT> {
+        let mut ad = IDXGIAdapter(core::ptr::null_mut());
+        let hr = unsafe { ((*(*self.0)).EnumAdapters)(self.0 as _, Adapter, &mut ad.0 as *mut _ as _) };
+        if hr >= 0 { Ok(ad) } else { Err(hr) }
     }
-    pub unsafe fn MakeWindowAssociation(&self, WindowHandle: HWND, Flags: u32) -> HRESULT {
-        unsafe { ((*(*self.0)).MakeWindowAssociation)(self.0 as _, WindowHandle, Flags) }
+    pub unsafe fn MakeWindowAssociation(&self, WindowHandle: HWND, Flags: u32) -> Result<(), HRESULT> {
+        let hr = unsafe { ((*(*self.0)).MakeWindowAssociation)(self.0 as _, WindowHandle, Flags) };
+        if hr >= 0 { Ok(()) } else { Err(hr) }
     }
-    pub unsafe fn GetWindowAssociation(&self, pWindowHandle: &mut HWND) -> HRESULT {
-        unsafe { ((*(*self.0)).GetWindowAssociation)(self.0 as _, pWindowHandle as *mut _) }
+    pub unsafe fn GetWindowAssociation(&self) -> Result<HWND, HRESULT> {
+        let mut hwnd = core::ptr::null_mut();
+        let hr = unsafe { ((*(*self.0)).GetWindowAssociation)(self.0 as _, &mut hwnd) };
+        if hr >= 0 { Ok(hwnd) } else { Err(hr) }
     }
     pub unsafe fn CreateSwapChain(
         &self,
         pDevice: &IUnknown,
         pDesc: &DXGI_SWAP_CHAIN_DESC,
-        ppSwapChain: &mut IDXGISwapChain,
-    ) -> HRESULT {
-        unsafe {
+    ) -> Result<IDXGISwapChain, HRESULT> {
+        let mut sc = IDXGISwapChain(core::ptr::null_mut());
+        let hr = unsafe {
             ((*(*self.0)).CreateSwapChain)(
                 self.0 as _,
                 pDevice.0 as _,
                 pDesc as *const _,
-                ppSwapChain as *mut _ as _,
+                &mut sc.0 as *mut _ as _,
             )
-        }
+        };
+        if hr >= 0 { Ok(sc) } else { Err(hr) }
     }
-    pub unsafe fn CreateSoftwareAdapter(
-        &self,
-        Module: HMODULE,
-        ppAdapter: &mut IDXGIAdapter,
-    ) -> HRESULT {
-        unsafe {
-            ((*(*self.0)).CreateSoftwareAdapter)(self.0 as _, Module, ppAdapter as *mut _ as _)
-        }
+    pub unsafe fn CreateSoftwareAdapter(&self, Module: HMODULE) -> Result<IDXGIAdapter, HRESULT> {
+        let mut ad = IDXGIAdapter(core::ptr::null_mut());
+        let hr = unsafe { ((*(*self.0)).CreateSoftwareAdapter)(self.0 as _, Module, &mut ad.0 as *mut _ as _) };
+        if hr >= 0 { Ok(ad) } else { Err(hr) }
     }
 }
 
@@ -835,8 +900,8 @@ pub struct IDXGIFactory1Vtbl {
 pub struct IDXGIFactory1(pub *mut *const IDXGIFactory1Vtbl);
 
 impl IDXGIFactory1 {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
-        unsafe { IUnknown(self.0 as _).QueryInterface(riid, ppvObject) }
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
+        unsafe { IUnknown(self.0 as _).QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).AddRef() }
@@ -844,8 +909,10 @@ impl IDXGIFactory1 {
     pub unsafe fn Release(&self) -> u32 {
         unsafe { IUnknown(self.0 as _).Release() }
     }
-    pub unsafe fn EnumAdapters1(&self, Adapter: u32, ppAdapter: &mut IDXGIAdapter1) -> HRESULT {
-        unsafe { ((*(*self.0)).EnumAdapters1)(self.0 as _, Adapter, ppAdapter as *mut _ as _) }
+    pub unsafe fn EnumAdapters1(&self, Adapter: u32) -> Result<IDXGIAdapter1, HRESULT> {
+        let mut ad = IDXGIAdapter1(core::ptr::null_mut());
+        let hr = unsafe { ((*(*self.0)).EnumAdapters1)(self.0 as _, Adapter, &mut ad.0 as *mut _ as _) };
+        if hr >= 0 { Ok(ad) } else { Err(hr) }
     }
     pub unsafe fn IsCurrent(&self) -> BOOL {
         unsafe { ((*(*self.0)).IsCurrent)(self.0 as _) }
@@ -866,14 +933,32 @@ mod ffi {
     }
 }
 
-pub unsafe fn CreateDXGIFactory(riid: &GUID, ppFactory: &mut *mut c_void) -> HRESULT {
-    unsafe { ffi::CreateDXGIFactory(riid as *const _, ppFactory as *mut _ as _) }
+pub unsafe fn CreateDXGIFactory<T>(riid: &GUID) -> Result<T, HRESULT> {
+    let mut factory = core::ptr::null_mut();
+    let hr = unsafe { ffi::CreateDXGIFactory(riid as *const _, &mut factory) };
+    if hr >= 0 {
+        Ok(unsafe { core::mem::transmute_copy(&factory) })
+    } else {
+        Err(hr)
+    }
 }
 
-pub unsafe fn CreateDXGIFactory1(riid: &GUID, ppFactory: &mut *mut c_void) -> HRESULT {
-    unsafe { ffi::CreateDXGIFactory1(riid as *const _, ppFactory as *mut _ as _) }
+pub unsafe fn CreateDXGIFactory1<T>(riid: &GUID) -> Result<T, HRESULT> {
+    let mut factory = core::ptr::null_mut();
+    let hr = unsafe { ffi::CreateDXGIFactory1(riid as *const _, &mut factory) };
+    if hr >= 0 {
+        Ok(unsafe { core::mem::transmute_copy(&factory) })
+    } else {
+        Err(hr)
+    }
 }
 
-pub unsafe fn CreateDXGIFactory2(Flags: u32, riid: &GUID, ppFactory: &mut *mut c_void) -> HRESULT {
-    unsafe { ffi::CreateDXGIFactory2(Flags, riid as *const _, ppFactory as *mut _ as _) }
+pub unsafe fn CreateDXGIFactory2<T>(Flags: u32, riid: &GUID) -> Result<T, HRESULT> {
+    let mut factory = core::ptr::null_mut();
+    let hr = unsafe { ffi::CreateDXGIFactory2(Flags, riid as *const _, &mut factory) };
+    if hr >= 0 {
+        Ok(unsafe { core::mem::transmute_copy(&factory) })
+    } else {
+        Err(hr)
+    }
 }

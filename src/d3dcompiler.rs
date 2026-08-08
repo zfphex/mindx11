@@ -1,5 +1,5 @@
 use crate::d3dcommon::{D3D_SHADER_MACRO, ID3D10Blob};
-use crate::types::HRESULT;
+use crate::types::{HRESULT, IUnknown};
 use core::ffi::c_void;
 
 pub const D3DCOMPILE_DEBUG: u32 = 1 << 0;
@@ -76,28 +76,39 @@ pub unsafe fn D3DCompile(
     src_data: &[u8],
     source_name: Option<&[u8]>,
     defines: Option<&[D3D_SHADER_MACRO]>,
-    include: Option<*mut c_void>,
+    include: Option<&IUnknown>,
     entrypoint: Option<&[u8]>,
     target: &[u8],
     flags1: u32,
     flags2: u32,
-    pp_code: &mut ID3D10Blob,
-    pp_error_msgs: Option<&mut ID3D10Blob>,
-) -> HRESULT {
-    unsafe {
+) -> Result<(ID3D10Blob, Option<ID3D10Blob>), (HRESULT, Option<ID3D10Blob>)> {
+    let mut code_blob = ID3D10Blob(core::ptr::null_mut());
+    let mut error_blob = ID3D10Blob(core::ptr::null_mut());
+    let inc_ptr = include.map_or(core::ptr::null_mut(), |i| i.0 as _);
+    let hr = unsafe {
         ffi::D3DCompile(
             src_data.as_ptr() as _,
             src_data.len(),
             source_name.map_or(core::ptr::null(), |s| s.as_ptr()),
             defines.map_or(core::ptr::null(), |d| d.as_ptr()),
-            include.unwrap_or(core::ptr::null_mut()),
+            inc_ptr,
             entrypoint.map_or(core::ptr::null(), |e| e.as_ptr()),
             target.as_ptr(),
             flags1,
             flags2,
-            pp_code as *mut _ as _,
-            pp_error_msgs.map_or(core::ptr::null_mut(), |e| e as *mut _ as _),
+            &mut code_blob as *mut _ as _,
+            &mut error_blob as *mut _ as _,
         )
+    };
+    let err_opt = if !error_blob.0.is_null() {
+        Some(error_blob)
+    } else {
+        None
+    };
+    if hr >= 0 {
+        Ok((code_blob, err_opt))
+    } else {
+        Err((hr, err_opt))
     }
 }
 
@@ -105,27 +116,28 @@ pub unsafe fn D3DCompile2(
     src_data: &[u8],
     source_name: Option<&[u8]>,
     defines: Option<&[D3D_SHADER_MACRO]>,
-    include: Option<*mut c_void>,
+    include: Option<&IUnknown>,
     entrypoint: Option<&[u8]>,
     target: &[u8],
     flags1: u32,
     flags2: u32,
     secondary_data_flags: u32,
     secondary_data: Option<&[u8]>,
-    pp_code: &mut ID3D10Blob,
-    pp_error_msgs: Option<&mut ID3D10Blob>,
-) -> HRESULT {
+) -> Result<(ID3D10Blob, Option<ID3D10Blob>), (HRESULT, Option<ID3D10Blob>)> {
     let (sec_ptr, sec_len) = match secondary_data {
         Some(slice) => (slice.as_ptr() as _, slice.len()),
         None => (core::ptr::null(), 0),
     };
-    unsafe {
+    let mut code_blob = ID3D10Blob(core::ptr::null_mut());
+    let mut error_blob = ID3D10Blob(core::ptr::null_mut());
+    let inc_ptr = include.map_or(core::ptr::null_mut(), |i| i.0 as _);
+    let hr = unsafe {
         ffi::D3DCompile2(
             src_data.as_ptr() as _,
             src_data.len(),
             source_name.map_or(core::ptr::null(), |s| s.as_ptr()),
             defines.map_or(core::ptr::null(), |d| d.as_ptr()),
-            include.unwrap_or(core::ptr::null_mut()),
+            inc_ptr,
             entrypoint.map_or(core::ptr::null(), |e| e.as_ptr()),
             target.as_ptr(),
             flags1,
@@ -133,34 +145,55 @@ pub unsafe fn D3DCompile2(
             secondary_data_flags,
             sec_ptr,
             sec_len,
-            pp_code as *mut _ as _,
-            pp_error_msgs.map_or(core::ptr::null_mut(), |e| e as *mut _ as _),
+            &mut code_blob as *mut _ as _,
+            &mut error_blob as *mut _ as _,
         )
+    };
+    let err_opt = if !error_blob.0.is_null() {
+        Some(error_blob)
+    } else {
+        None
+    };
+    if hr >= 0 {
+        Ok((code_blob, err_opt))
+    } else {
+        Err((hr, err_opt))
     }
 }
 
 pub unsafe fn D3DCompileFromFile(
     file_name: &[u16],
     defines: Option<&[D3D_SHADER_MACRO]>,
-    include: Option<*mut c_void>,
+    include: Option<&IUnknown>,
     entrypoint: Option<&[u8]>,
     target: &[u8],
     flags1: u32,
     flags2: u32,
-    pp_code: &mut ID3D10Blob,
-    pp_error_msgs: Option<&mut ID3D10Blob>,
-) -> HRESULT {
-    unsafe {
+) -> Result<(ID3D10Blob, Option<ID3D10Blob>), (HRESULT, Option<ID3D10Blob>)> {
+    let mut code_blob = ID3D10Blob(core::ptr::null_mut());
+    let mut error_blob = ID3D10Blob(core::ptr::null_mut());
+    let inc_ptr = include.map_or(core::ptr::null_mut(), |i| i.0 as _);
+    let hr = unsafe {
         ffi::D3DCompileFromFile(
             file_name.as_ptr(),
             defines.map_or(core::ptr::null(), |d| d.as_ptr()),
-            include.unwrap_or(core::ptr::null_mut()),
+            inc_ptr,
             entrypoint.map_or(core::ptr::null(), |e| e.as_ptr()),
             target.as_ptr(),
             flags1,
             flags2,
-            pp_code as *mut _ as _,
-            pp_error_msgs.map_or(core::ptr::null_mut(), |e| e as *mut _ as _),
+            &mut code_blob as *mut _ as _,
+            &mut error_blob as *mut _ as _,
         )
+    };
+    let err_opt = if !error_blob.0.is_null() {
+        Some(error_blob)
+    } else {
+        None
+    };
+    if hr >= 0 {
+        Ok((code_blob, err_opt))
+    } else {
+        Err((hr, err_opt))
     }
 }

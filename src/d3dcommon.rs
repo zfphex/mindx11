@@ -98,9 +98,9 @@ pub struct ID3D10Blob(pub *mut *const ID3D10BlobVtbl);
 pub type ID3DBlob = ID3D10Blob;
 
 impl ID3D10Blob {
-    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
+    pub unsafe fn QueryInterface<T>(&self, riid: &GUID) -> Result<T, HRESULT> {
         let unk = IUnknown(self.0 as _);
-        unsafe { unk.QueryInterface(riid, ppvObject) }
+        unsafe { unk.QueryInterface(riid) }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         let unk = IUnknown(self.0 as _);
@@ -115,5 +115,14 @@ impl ID3D10Blob {
     }
     pub unsafe fn GetBufferSize(&self) -> usize {
         unsafe { ((*(*self.0)).GetBufferSize)(self.0 as _) }
+    }
+    pub unsafe fn as_slice(&self) -> &[u8] {
+        let ptr = unsafe { self.GetBufferPointer() as *const u8 };
+        let len = unsafe { self.GetBufferSize() };
+        if ptr.is_null() {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(ptr, len) }
+        }
     }
 }
