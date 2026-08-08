@@ -98,7 +98,7 @@ pub struct ID3D10Blob(pub *mut *const ID3D10BlobVtbl);
 pub type ID3DBlob = ID3D10Blob;
 
 impl ID3D10Blob {
-    pub unsafe fn QueryInterface(&self, riid: *const GUID, ppvObject: *mut *mut c_void) -> HRESULT {
+    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
         let unk = IUnknown(self.0 as _);
         unsafe { unk.QueryInterface(riid, ppvObject) }
     }

@@ -56,8 +56,10 @@ pub struct IUnknownVtbl {
 pub struct IUnknown(pub *mut *const IUnknownVtbl);
 
 impl IUnknown {
-    pub unsafe fn QueryInterface(&self, riid: *const GUID, ppvObject: *mut *mut c_void) -> HRESULT {
-        unsafe { ((*(*self.0)).QueryInterface)(self.0 as _, riid, ppvObject) }
+    pub unsafe fn QueryInterface(&self, riid: &GUID, ppvObject: &mut *mut c_void) -> HRESULT {
+        unsafe {
+            ((*(*self.0)).QueryInterface)(self.0 as _, riid as *const _, ppvObject as *mut _ as _)
+        }
     }
     pub unsafe fn AddRef(&self) -> u32 {
         unsafe { ((*(*self.0)).AddRef)(self.0 as _) }
