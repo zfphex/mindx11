@@ -25,8 +25,8 @@ fn main() {
             }
             Err(hr) => {
                 println!(
-                    "Hardware device failed with HRESULT 0x{:08X}. Trying WARP driver...",
-                    hr as u32
+                    "Hardware device failed with {}. Trying WARP driver...",
+                    hr
                 );
                 match D3D11CreateDevice(
                     None,
@@ -44,7 +44,7 @@ fn main() {
                         res
                     }
                     Err(hr2) => {
-                        println!("Failed to create WARP D3D11 device: 0x{:08X}", hr2 as u32);
+                        println!("Failed to create WARP D3D11 device: {}", hr2);
                         return;
                     }
                 }
@@ -75,7 +75,7 @@ fn main() {
                 println!("Buffer Release ref count: {}", refcount);
             }
             Err(hr_buf) => {
-                println!("CreateBuffer failed with hr: 0x{:08X}", hr_buf as u32);
+                println!("CreateBuffer failed: {}", hr_buf);
             }
         }
 
@@ -106,8 +106,8 @@ fn main() {
             }
             Err((hr_compile, error_blob_opt)) => {
                 println!(
-                    "HLSL Compilation Result: HRESULT 0x{:08X}",
-                    hr_compile as u32
+                    "HLSL Compilation Result: {}",
+                    hr_compile
                 );
                 if let Some(err_blob) = error_blob_opt {
                     let slice = err_blob.as_slice();
