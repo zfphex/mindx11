@@ -1,6 +1,6 @@
 use crate::d3dcommon::{D3D_SHADER_MACRO, ID3D10Blob};
 use crate::types::{HRESULT, IUnknown};
-use core::ffi::c_void;
+use core::ffi::{c_void, CStr};
 
 pub const D3DCOMPILE_DEBUG: u32 = 1 << 0;
 pub const D3DCOMPILE_SKIP_VALIDATION: u32 = 1 << 1;
@@ -74,11 +74,11 @@ mod ffi {
 
 pub unsafe fn D3DCompile(
     src_data: &[u8],
-    source_name: Option<&[u8]>,
+    source_name: Option<&CStr>,
     defines: Option<&[D3D_SHADER_MACRO]>,
     include: Option<&IUnknown>,
-    entrypoint: Option<&[u8]>,
-    target: &[u8],
+    entrypoint: Option<&CStr>,
+    target: &CStr,
     flags1: u32,
     flags2: u32,
 ) -> Result<(ID3D10Blob, Option<ID3D10Blob>), (HRESULT, Option<ID3D10Blob>)> {
@@ -89,11 +89,11 @@ pub unsafe fn D3DCompile(
         ffi::D3DCompile(
             src_data.as_ptr() as _,
             src_data.len(),
-            source_name.map_or(core::ptr::null(), |s| s.as_ptr()),
+            source_name.map_or(core::ptr::null(), |s| s.as_ptr() as _),
             defines.map_or(core::ptr::null(), |d| d.as_ptr()),
             inc_ptr,
-            entrypoint.map_or(core::ptr::null(), |e| e.as_ptr()),
-            target.as_ptr(),
+            entrypoint.map_or(core::ptr::null(), |e| e.as_ptr() as _),
+            target.as_ptr() as _,
             flags1,
             flags2,
             &mut code_blob as *mut _ as _,
@@ -114,11 +114,11 @@ pub unsafe fn D3DCompile(
 
 pub unsafe fn D3DCompile2(
     src_data: &[u8],
-    source_name: Option<&[u8]>,
+    source_name: Option<&CStr>,
     defines: Option<&[D3D_SHADER_MACRO]>,
     include: Option<&IUnknown>,
-    entrypoint: Option<&[u8]>,
-    target: &[u8],
+    entrypoint: Option<&CStr>,
+    target: &CStr,
     flags1: u32,
     flags2: u32,
     secondary_data_flags: u32,
@@ -135,11 +135,11 @@ pub unsafe fn D3DCompile2(
         ffi::D3DCompile2(
             src_data.as_ptr() as _,
             src_data.len(),
-            source_name.map_or(core::ptr::null(), |s| s.as_ptr()),
+            source_name.map_or(core::ptr::null(), |s| s.as_ptr() as _),
             defines.map_or(core::ptr::null(), |d| d.as_ptr()),
             inc_ptr,
-            entrypoint.map_or(core::ptr::null(), |e| e.as_ptr()),
-            target.as_ptr(),
+            entrypoint.map_or(core::ptr::null(), |e| e.as_ptr() as _),
+            target.as_ptr() as _,
             flags1,
             flags2,
             secondary_data_flags,
@@ -165,8 +165,8 @@ pub unsafe fn D3DCompileFromFile(
     file_name: &[u16],
     defines: Option<&[D3D_SHADER_MACRO]>,
     include: Option<&IUnknown>,
-    entrypoint: Option<&[u8]>,
-    target: &[u8],
+    entrypoint: Option<&CStr>,
+    target: &CStr,
     flags1: u32,
     flags2: u32,
 ) -> Result<(ID3D10Blob, Option<ID3D10Blob>), (HRESULT, Option<ID3D10Blob>)> {
@@ -178,8 +178,8 @@ pub unsafe fn D3DCompileFromFile(
             file_name.as_ptr(),
             defines.map_or(core::ptr::null(), |d| d.as_ptr()),
             inc_ptr,
-            entrypoint.map_or(core::ptr::null(), |e| e.as_ptr()),
-            target.as_ptr(),
+            entrypoint.map_or(core::ptr::null(), |e| e.as_ptr() as _),
+            target.as_ptr() as _,
             flags1,
             flags2,
             &mut code_blob as *mut _ as _,

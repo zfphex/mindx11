@@ -86,8 +86,8 @@ fn main() {
             None,
             None,
             None,
-            Some(b"main\0"),
-            b"vs_5_0\0",
+            Some(c"main"),
+            c"vs_5_0",
             D3DCOMPILE_ENABLE_STRICTNESS,
             0,
         ) {
