@@ -1,5 +1,7 @@
 use crate::d3dcommon::{D3D_DRIVER_TYPE, D3D_FEATURE_LEVEL, D3D_PRIMITIVE_TOPOLOGY};
-use crate::dxgi::{DXGI_FORMAT, DXGI_SAMPLE_DESC, DXGI_SWAP_CHAIN_DESC, IDXGIAdapter, IDXGISwapChain};
+use crate::dxgi::{
+    DXGI_FORMAT, DXGI_SAMPLE_DESC, DXGI_SWAP_CHAIN_DESC, IDXGIAdapter, IDXGISwapChain,
+};
 use crate::types::{BOOL, GUID, HMODULE, HRESULT, IUnknown, IUnknownVtbl, RECT};
 use core::ffi::c_void;
 
@@ -599,9 +601,8 @@ impl ID3D11DeviceChild {
             Some(buf) => (buf.as_mut_ptr() as *mut c_void, buf.len() as u32),
             None => (core::ptr::null_mut(), 0),
         };
-        let hr = unsafe {
-            ((*(*self.0)).GetPrivateData)(self.0 as _, guid as *const _, &mut size, ptr)
-        };
+        let hr =
+            unsafe { ((*(*self.0)).GetPrivateData)(self.0 as _, guid as *const _, &mut size, ptr) };
         if hr >= 0 { Ok(size) } else { Err(hr) }
     }
     pub unsafe fn SetPrivateData(&self, guid: &GUID, pData: &[u8]) -> Result<(), HRESULT> {
@@ -621,7 +622,8 @@ impl ID3D11DeviceChild {
         pData: Option<&IUnknown>,
     ) -> Result<(), HRESULT> {
         let unk = pData.map_or(core::ptr::null(), |u| u as *const _);
-        let hr = unsafe { ((*(*self.0)).SetPrivateDataInterface)(self.0 as _, guid as *const _, unk) };
+        let hr =
+            unsafe { ((*(*self.0)).SetPrivateDataInterface)(self.0 as _, guid as *const _, unk) };
         if hr >= 0 { Ok(()) } else { Err(hr) }
     }
 }
@@ -1881,7 +1883,11 @@ impl ID3D11DeviceContext {
                 mapped.as_mut_ptr(),
             )
         };
-        if hr >= 0 { Ok(unsafe { mapped.assume_init() }) } else { Err(hr) }
+        if hr >= 0 {
+            Ok(unsafe { mapped.assume_init() })
+        } else {
+            Err(hr)
+        }
     }
     pub unsafe fn Unmap(&self, pResource: &ID3D11Resource, Subresource: u32) {
         unsafe { ((*(*self.0)).Unmap)(self.0 as _, pResource.0 as _, Subresource) }
@@ -2028,7 +2034,8 @@ impl ID3D11DeviceContext {
             Some(s) => (s.as_mut_ptr() as *mut c_void, s.len() as u32),
             None => (core::ptr::null_mut(), 0),
         };
-        let hr = unsafe { ((*(*self.0)).GetData)(self.0 as _, pAsync.0 as _, ptr, size, GetDataFlags) };
+        let hr =
+            unsafe { ((*(*self.0)).GetData)(self.0 as _, pAsync.0 as _, ptr, size, GetDataFlags) };
         if hr >= 0 { Ok(size) } else { Err(hr) }
     }
     pub unsafe fn SetPredication(&self, pPredicate: Option<&IUnknown>, PredicateValue: BOOL) {
@@ -2353,7 +2360,9 @@ impl ID3D11DeviceContext {
         }
     }
     pub unsafe fn ExecuteCommandList(&self, pCommandList: &IUnknown, RestoreContextState: BOOL) {
-        unsafe { ((*(*self.0)).ExecuteCommandList)(self.0 as _, pCommandList.0 as _, RestoreContextState) }
+        unsafe {
+            ((*(*self.0)).ExecuteCommandList)(self.0 as _, pCommandList.0 as _, RestoreContextState)
+        }
     }
     pub unsafe fn HSSetShaderResources(
         &self,
@@ -2555,7 +2564,11 @@ impl ID3D11DeviceContext {
                 &mut inst_count,
             )
         };
-        if !shader.0.is_null() { Some(shader) } else { None }
+        if !shader.0.is_null() {
+            Some(shader)
+        } else {
+            None
+        }
     }
     pub unsafe fn PSGetSamplers(&self, StartSlot: u32, ppSamplers: &mut [ID3D11SamplerState]) {
         unsafe {
@@ -2584,7 +2597,11 @@ impl ID3D11DeviceContext {
                 &mut inst_count,
             )
         };
-        if !shader.0.is_null() { Some(shader) } else { None }
+        if !shader.0.is_null() {
+            Some(shader)
+        } else {
+            None
+        }
     }
     pub unsafe fn PSGetConstantBuffers(
         &self,
@@ -2603,7 +2620,11 @@ impl ID3D11DeviceContext {
     pub unsafe fn IAGetInputLayout(&self) -> Option<ID3D11InputLayout> {
         let mut layout = ID3D11InputLayout(core::ptr::null_mut());
         unsafe { ((*(*self.0)).IAGetInputLayout)(self.0 as _, &mut layout.0 as *mut _ as _) };
-        if !layout.0.is_null() { Some(layout) } else { None }
+        if !layout.0.is_null() {
+            Some(layout)
+        } else {
+            None
+        }
     }
     pub unsafe fn IAGetVertexBuffers(
         &self,
@@ -2673,7 +2694,11 @@ impl ID3D11DeviceContext {
                 &mut inst_count,
             )
         };
-        if !shader.0.is_null() { Some(shader) } else { None }
+        if !shader.0.is_null() {
+            Some(shader)
+        } else {
+            None
+        }
     }
     pub unsafe fn IAGetPrimitiveTopology(&self) -> D3D_PRIMITIVE_TOPOLOGY {
         let mut top = D3D_PRIMITIVE_TOPOLOGY::UNDEFINED;
@@ -2707,13 +2732,7 @@ impl ID3D11DeviceContext {
     pub unsafe fn GetPredication(&self) -> (Option<IUnknown>, BOOL) {
         let mut pred = IUnknown(core::ptr::null_mut());
         let mut val = 0;
-        unsafe {
-            ((*(*self.0)).GetPredication)(
-                self.0 as _,
-                &mut pred.0 as *mut _ as _,
-                &mut val,
-            )
-        };
+        unsafe { ((*(*self.0)).GetPredication)(self.0 as _, &mut pred.0 as *mut _ as _, &mut val) };
         let p_opt = if !pred.0.is_null() { Some(pred) } else { None };
         (p_opt, val)
     }
@@ -2788,7 +2807,11 @@ impl ID3D11DeviceContext {
                 &mut mask,
             )
         };
-        let s_opt = if !state.0.is_null() { Some(state) } else { None };
+        let s_opt = if !state.0.is_null() {
+            Some(state)
+        } else {
+            None
+        };
         (s_opt, factor, mask)
     }
     pub unsafe fn OMGetDepthStencilState(&self) -> (Option<ID3D11DepthStencilState>, u32) {
@@ -2801,7 +2824,11 @@ impl ID3D11DeviceContext {
                 &mut sref,
             )
         };
-        let s_opt = if !state.0.is_null() { Some(state) } else { None };
+        let s_opt = if !state.0.is_null() {
+            Some(state)
+        } else {
+            None
+        };
         (s_opt, sref)
     }
     pub unsafe fn SOGetTargets(&self, ppSOTargets: &mut [ID3D11Buffer]) {
@@ -2818,10 +2845,7 @@ impl ID3D11DeviceContext {
         unsafe { ((*(*self.0)).RSGetState)(self.0 as _, &mut rs.0 as *mut _ as _) };
         if !rs.0.is_null() { Some(rs) } else { None }
     }
-    pub unsafe fn RSGetViewports(
-        &self,
-        pViewports: Option<&mut [D3D11_VIEWPORT]>,
-    ) -> u32 {
+    pub unsafe fn RSGetViewports(&self, pViewports: Option<&mut [D3D11_VIEWPORT]>) -> u32 {
         let (vp, mut count) = match pViewports {
             Some(s) => (s.as_mut_ptr(), s.len() as u32),
             None => (core::ptr::null_mut(), 0),
@@ -2868,7 +2892,11 @@ impl ID3D11DeviceContext {
                 &mut inst_count,
             )
         };
-        if !shader.0.is_null() { Some(shader) } else { None }
+        if !shader.0.is_null() {
+            Some(shader)
+        } else {
+            None
+        }
     }
     pub unsafe fn HSGetSamplers(&self, StartSlot: u32, ppSamplers: &mut [ID3D11SamplerState]) {
         unsafe {
@@ -2925,7 +2953,11 @@ impl ID3D11DeviceContext {
                 &mut inst_count,
             )
         };
-        if !shader.0.is_null() { Some(shader) } else { None }
+        if !shader.0.is_null() {
+            Some(shader)
+        } else {
+            None
+        }
     }
     pub unsafe fn DSGetSamplers(&self, StartSlot: u32, ppSamplers: &mut [ID3D11SamplerState]) {
         unsafe {
@@ -2996,7 +3028,11 @@ impl ID3D11DeviceContext {
                 &mut inst_count,
             )
         };
-        if !shader.0.is_null() { Some(shader) } else { None }
+        if !shader.0.is_null() {
+            Some(shader)
+        } else {
+            None
+        }
     }
     pub unsafe fn CSGetSamplers(&self, StartSlot: u32, ppSamplers: &mut [ID3D11SamplerState]) {
         unsafe {
@@ -3208,7 +3244,8 @@ pub struct ID3D11DeviceVtbl {
         SampleCount: u32,
         pNumQualityLevels: *mut u32,
     ) -> HRESULT,
-    pub CheckCounterInfo: unsafe extern "system" fn(this: *mut c_void, pCounterInfo: *mut D3D11_COUNTER_INFO),
+    pub CheckCounterInfo:
+        unsafe extern "system" fn(this: *mut c_void, pCounterInfo: *mut D3D11_COUNTER_INFO),
     pub CheckCounter: unsafe extern "system" fn(
         this: *mut c_void,
         pDesc: *const D3D11_COUNTER_DESC,
@@ -3659,10 +3696,7 @@ impl ID3D11Device {
         };
         if hr >= 0 { Ok(cnt) } else { Err(hr) }
     }
-    pub unsafe fn CheckFormatSupport(
-        &self,
-        Format: DXGI_FORMAT,
-    ) -> Result<u32, HRESULT> {
+    pub unsafe fn CheckFormatSupport(&self, Format: DXGI_FORMAT) -> Result<u32, HRESULT> {
         let mut support = 0u32;
         let hr = unsafe { ((*(*self.0)).CheckFormatSupport)(self.0 as _, Format, &mut support) };
         if hr >= 0 { Ok(support) } else { Err(hr) }
@@ -3723,7 +3757,11 @@ impl ID3D11Device {
                 &mut d_len,
             )
         };
-        if hr >= 0 { Ok((c_type, active)) } else { Err(hr) }
+        if hr >= 0 {
+            Ok((c_type, active))
+        } else {
+            Err(hr)
+        }
     }
     pub unsafe fn CheckFeatureSupport(
         &self,
@@ -3749,9 +3787,8 @@ impl ID3D11Device {
             Some(buf) => (buf.as_mut_ptr() as *mut c_void, buf.len() as u32),
             None => (core::ptr::null_mut(), 0),
         };
-        let hr = unsafe {
-            ((*(*self.0)).GetPrivateData)(self.0 as _, guid as *const _, &mut size, ptr)
-        };
+        let hr =
+            unsafe { ((*(*self.0)).GetPrivateData)(self.0 as _, guid as *const _, &mut size, ptr) };
         if hr >= 0 { Ok(size) } else { Err(hr) }
     }
     pub unsafe fn SetPrivateData(&self, guid: &GUID, pData: &[u8]) -> Result<(), HRESULT> {
@@ -3771,7 +3808,8 @@ impl ID3D11Device {
         pData: Option<&IUnknown>,
     ) -> Result<(), HRESULT> {
         let unk = pData.map_or(core::ptr::null(), |u| u as *const _);
-        let hr = unsafe { ((*(*self.0)).SetPrivateDataInterface)(self.0 as _, guid as *const _, unk) };
+        let hr =
+            unsafe { ((*(*self.0)).SetPrivateDataInterface)(self.0 as _, guid as *const _, unk) };
         if hr >= 0 { Ok(()) } else { Err(hr) }
     }
     pub unsafe fn GetFeatureLevel(&self) -> D3D_FEATURE_LEVEL {
@@ -3835,7 +3873,7 @@ pub mod ffi {
 pub unsafe fn D3D11CreateDevice(
     pAdapter: Option<&IDXGIAdapter>,
     DriverType: D3D_DRIVER_TYPE,
-    Software: HMODULE,
+    Software: Option<HMODULE>,
     Flags: u32,
     pFeatureLevels: Option<&[D3D_FEATURE_LEVEL]>,
     SDKVersion: u32,
@@ -3848,11 +3886,12 @@ pub unsafe fn D3D11CreateDevice(
         None => (core::ptr::null(), 0),
     };
     let adapter_ptr = pAdapter.map_or(core::ptr::null_mut(), |a| a.0 as _);
+    let software_ptr = Software.unwrap_or(core::ptr::null_mut());
     let hr = unsafe {
         ffi::D3D11CreateDevice(
             adapter_ptr,
             DriverType,
-            Software,
+            software_ptr,
             Flags,
             fl_ptr,
             fl_len,
@@ -3872,12 +3911,20 @@ pub unsafe fn D3D11CreateDevice(
 pub unsafe fn D3D11CreateDeviceAndSwapChain(
     pAdapter: Option<&IDXGIAdapter>,
     DriverType: D3D_DRIVER_TYPE,
-    Software: HMODULE,
+    Software: Option<HMODULE>,
     Flags: u32,
     pFeatureLevels: Option<&[D3D_FEATURE_LEVEL]>,
     SDKVersion: u32,
     pSwapChainDesc: Option<&DXGI_SWAP_CHAIN_DESC>,
-) -> Result<(IDXGISwapChain, ID3D11Device, D3D_FEATURE_LEVEL, ID3D11DeviceContext), HRESULT> {
+) -> Result<
+    (
+        IDXGISwapChain,
+        ID3D11Device,
+        D3D_FEATURE_LEVEL,
+        ID3D11DeviceContext,
+    ),
+    HRESULT,
+> {
     let mut swap_chain = IDXGISwapChain(core::ptr::null_mut());
     let mut device = ID3D11Device(core::ptr::null_mut());
     let mut feature_level = D3D_FEATURE_LEVEL::_11_0;
@@ -3887,12 +3934,13 @@ pub unsafe fn D3D11CreateDeviceAndSwapChain(
         None => (core::ptr::null(), 0),
     };
     let adapter_ptr = pAdapter.map_or(core::ptr::null_mut(), |a| a.0 as _);
+    let software_ptr = Software.unwrap_or(core::ptr::null_mut());
     let sc_desc_ptr = pSwapChainDesc.map_or(core::ptr::null(), |s| s as *const _);
     let hr = unsafe {
         ffi::D3D11CreateDeviceAndSwapChain(
             adapter_ptr,
             DriverType,
-            Software,
+            software_ptr,
             Flags,
             fl_ptr,
             fl_len,

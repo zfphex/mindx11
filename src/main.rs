@@ -11,7 +11,7 @@ fn main() {
         let (device, _feature_level, context) = match D3D11CreateDevice(
             None,
             D3D_DRIVER_TYPE::HARDWARE,
-            core::ptr::null_mut(),
+            None,
             D3D11_CREATE_DEVICE_BGRA_SUPPORT,
             Some(&feature_levels),
             D3D11_SDK_VERSION,
@@ -24,11 +24,14 @@ fn main() {
                 res
             }
             Err(hr) => {
-                println!("Hardware device failed with HRESULT 0x{:08X}. Trying WARP driver...", hr as u32);
+                println!(
+                    "Hardware device failed with HRESULT 0x{:08X}. Trying WARP driver...",
+                    hr as u32
+                );
                 match D3D11CreateDevice(
                     None,
                     D3D_DRIVER_TYPE::WARP,
-                    core::ptr::null_mut(),
+                    None,
                     D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                     Some(&feature_levels),
                     D3D11_SDK_VERSION,
@@ -94,12 +97,18 @@ fn main() {
                     code_blob.GetBufferSize()
                 );
                 let slice = code_blob.as_slice();
-                println!("First 4 bytes of bytecode: {:?}", &slice[..4.min(slice.len())]);
+                println!(
+                    "First 4 bytes of bytecode: {:?}",
+                    &slice[..4.min(slice.len())]
+                );
                 let refcount = code_blob.Release();
                 println!("Blob Release ref count: {}", refcount);
             }
             Err((hr_compile, error_blob_opt)) => {
-                println!("HLSL Compilation Result: HRESULT 0x{:08X}", hr_compile as u32);
+                println!(
+                    "HLSL Compilation Result: HRESULT 0x{:08X}",
+                    hr_compile as u32
+                );
                 if let Some(err_blob) = error_blob_opt {
                     let slice = err_blob.as_slice();
                     let err_msg = core::str::from_utf8(slice).unwrap_or("Invalid UTF-8");
