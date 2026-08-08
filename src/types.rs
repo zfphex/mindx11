@@ -205,7 +205,7 @@ impl GUID {
     }
 }
 
-pub const IID_IUNKNOWN: GUID = GUID::from_u128(0x00000000_0000_0000_c000_00000000046);
+pub const IID_IUNKNOWN: GUID = GUID::from_u128(0x00000000_0000_0000_c000_000000000046);
 
 #[repr(C)]
 pub struct IUnknownVtbl {
