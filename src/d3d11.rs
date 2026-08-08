@@ -2,7 +2,7 @@ use crate::d3dcommon::{D3D_DRIVER_TYPE, D3D_FEATURE_LEVEL, D3D_PRIMITIVE_TOPOLOG
 use crate::dxgi::{
     DXGI_FORMAT, DXGI_SAMPLE_DESC, DXGI_SWAP_CHAIN_DESC, IDXGIAdapter, IDXGISwapChain,
 };
-use crate::types::{BOOL, GUID, HMODULE, HRESULT, IUnknown, IUnknownVtbl, RECT};
+use crate::types::{BOOL, GUID, HANDLE, HMODULE, HRESULT, IUnknown, IUnknownVtbl, RECT};
 use core::ffi::c_void;
 
 pub const IID_ID3D11DEVICECHILD: GUID = GUID::from_u128(0x1841e5c8_16b0_489b_bcc8_44cfb0d5deae);
@@ -3232,6 +3232,17 @@ pub struct ID3D11DeviceVtbl {
         this: *mut c_void,
         pCounterDesc: *const D3D11_COUNTER_DESC,
         ppCounter: *mut *mut c_void,
+    ) -> HRESULT,
+    pub CreateDeferredContext: unsafe extern "system" fn(
+        this: *mut c_void,
+        ContextFlags: u32,
+        ppDeferredContext: *mut *mut ID3D11DeviceContext,
+    ) -> HRESULT,
+    pub OpenSharedResource: unsafe extern "system" fn(
+        this: *mut c_void,
+        hResource: HANDLE,
+        ReturnedInterface: *const GUID,
+        ppResource: *mut *mut c_void,
     ) -> HRESULT,
     pub CheckFormatSupport: unsafe extern "system" fn(
         this: *mut c_void,
